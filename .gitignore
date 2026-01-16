@@ -1,0 +1,9 @@
+/results/*
+/results_gold/*
+/data
+/demos/*
+/eval_out/*
+/pycache__/
+# Python
+__pycache__/
+*.py[cod]
