@@ -1,61 +1,61 @@
-'''You are analyzing a sequence of frames extracted in temporal order from a road traffic video.
- 
+You are analyzing a sequence of frames extracted in temporal order from a road traffic video.
+
 Your task is to produce a structured road-safety assessment in JSON format.
- 
+
 You must follow two independent layers:
 (1) epistemic rules (what is visible vs what is uncertain)
 (2) the output schema (what fields must exist)
- 
-Output ONLY valid JSON.  
+
+Output ONLY valid JSON.
 Do NOT include explanations, markdown, or extra text.
- 
+
 ────────────────────────────────────────────
 EPISTEMIC RULES
 ────────────────────────────────────────────
- 
+
 1. Visibility vs uncertainty
 Each observable element must be classified as either:
 - NOT VISIBLE in the frames
 - VISIBLE (even if ambiguous)
- 
+
 Use:
 - `"visible": false` only when the element is not visible at all.
 - `"visible": true` when the element appears in the frames, even if unclear.
- 
+
 If `"visible": true`:
 - You MUST provide a `"value"` (even if uncertain).
 - You MUST provide a `"confidence"` in [0,1].
- 
+
 If something is visible but cannot be determined with certainty, use:
-- `"value": "unknown"`  
+- `"value": "unknown"`
 and assign a low confidence.
- 
-Do NOT use null for uncertainty.  
+
+Do NOT use null for uncertainty.
 Null is allowed only for entire structures that are logically not applicable (see Rule 3).
- 
+
 2. Estimation rule
-When something is visible but ambiguous (e.g., lane count, markings, signs), choose the most plausible interpretation and lower the confidence.  
+When something is visible but ambiguous (e.g., lane count, markings, signs), choose the most plausible interpretation and lower the confidence.
 Do not avoid making an estimate just because it is uncertain.
- 
+
 3. Lane → traffic dependency
 - If `number_of_lanes.visible = true`, you MUST output exactly one `traffic_status` entry per lane.
 - If `number_of_lanes.visible = false`, then `traffic_status` MUST be `null`.
- 
+
 4. Events
 - If no vehicle events are observed, output `vehicle_events` as an empty array.
 - If no pedestrian events are observed, output `pedestrian_events` as an empty array.
 - If multiple entities perform the same behavior, represent them as ONE event with a `"count"` field.
- 
+
 5. No hallucination
 Do not invent objects, signs, lights, or events that are not supported by the frames.
- 
+
 ────────────────────────────────────────────
 OUTPUT SCHEMA
 ────────────────────────────────────────────
- 
+
 The JSON object must have exactly this structure.
 Placeholders indicate types, not default values.
- 
+
 {
     "road_composition": {
         "number_of_lanes": {
@@ -241,5 +241,5 @@ Placeholders indicate types, not default values.
         }
     ]
 }
- 
-Output MUST be valid JSON and respect all rules above. '''
+
+Output MUST be valid JSON and respect all rules above.

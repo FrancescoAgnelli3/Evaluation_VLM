@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
@@ -45,6 +46,7 @@ import numpy as np
 import pandas as pd
 
 BASE_DIR = Path(__file__).resolve().parent
+GT_DIR = "/mnt/ssd1/dataset_ft_VLM/dataset_test_json"
 
 
 # ----------------------------
@@ -797,9 +799,7 @@ def validate_struct(obj: Optional[Dict[str, Any]]) -> ValidationReport:
 
 def discover_teacher_standards(results_gold: Path) -> List[Tuple[str, Path]]:
     suffixes = [
-        ".teacher.perception_integrated.json",
-        ".teacher.integrated.json",
-        ".teacher.json",
+        ".json",
     ]
     out: List[Tuple[str, Path]] = []
     for p in sorted(results_gold.iterdir()):
@@ -828,6 +828,7 @@ def discover_teacher_runs(results_gold: Path, video_id: str) -> List[Path]:
 def discover_student_files(results: Path, video_id: str) -> List[Tuple[str, Path]]:
     suffixes = ["_json_answer.json", "_integrated.json", ".json"]
     files: List[Tuple[str, Path]] = []
+    vid_re = re.compile(rf"(?:^|_){re.escape(video_id)}_(.+)$")
 
     for p in results.iterdir():
         if not p.is_file():
@@ -837,19 +838,12 @@ def discover_student_files(results: Path, video_id: str) -> List[Tuple[str, Path
         if matched_suffix is None:
             continue
         stem = name[: -len(matched_suffix)] if matched_suffix != ".json" else name[: -len(".json")]
-        prefix = f"{video_id}_"
-        if stem.startswith(prefix):
-            model = stem[len(prefix):]
+        # Match "<video_id>_<model>" anywhere with "_" boundary before video_id.
+        # This covers "question_<video_id>_<model>" and optional numeric prefixes.
+        m = vid_re.search(stem)
+        if m:
+            model = m.group(1) or "unknown"
             files.append((model, p))
-            continue
-
-        # Allow optional numeric prefix before video_id (e.g., "10_<video_id>_<model>")
-        idx = stem.find(video_id)
-        if idx >= 0 and (idx == 0 or stem[idx - 1] == "_"):
-            tail = stem[idx + len(video_id):]
-            if tail.startswith("_"):
-                model = tail[1:] or "unknown"
-                files.append((model, p))
 
     return sorted(files, key=lambda x: x[0])
 
@@ -917,7 +911,7 @@ def weighted_mean(values: pd.Series, weights: pd.Series) -> float:
 
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--results-gold", type=Path, default=BASE_DIR / "results_gold")
+    ap.add_argument("--results-gold", type=Path, default=GT_DIR)
     ap.add_argument("--results", type=Path, default=BASE_DIR / "results")
     ap.add_argument("--out", type=Path, default=BASE_DIR / "eval_out")
     ap.add_argument("--limit-videos", type=int, default=None)
@@ -961,7 +955,8 @@ def main() -> None:
         student_files = discover_student_files(args.results, video_id)
         if args.model:
             allowed = {m.replace("-", "_") for m in args.model}
-            student_files = [(m, p) for (m, p) in student_files if m.replace("-", "_") in allowed]
+            if "all" not in allowed:
+                student_files = [(m, p) for (m, p) in student_files if m.replace("-", "_") in allowed]
 
         log(f"Video={video_id}: found {len(student_files)} student outputs (consensus_weight={consensus_weight:.3f})")
 

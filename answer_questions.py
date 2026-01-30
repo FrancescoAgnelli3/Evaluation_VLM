@@ -3,7 +3,7 @@
 Road-safety perception prompt runner using vLLM (OpenAI-compatible).
 
 Behavior:
-- For each video/model, send video + PROMPT_PERCEPTION_JSON.
+- For each video found under --media-dir, send video + PROMPT_PERCEPTION_JSON.
 - Save the model's JSON response directly to disk (one JSON file per call).
 
 Notes:
@@ -20,7 +20,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional
 
 # Ensure HF/torch caches are redirected before anything that may touch HF.
 os.environ.setdefault("HF_HOME", "/mnt/ssd1/hf")
@@ -39,16 +39,11 @@ from vllm_utils import (
     shutdown_vllm_server,
 )
 
-# Keep token login as it was in the original script.
-hf_token = os.environ["HF_TOKEN"]
-login(token=hf_token)
-os.environ["HF_TOKEN"] = "hf_token"
-os.environ["HUGGINGFACE_HUB_TOKEN"] = "hf_token"
+login(token=os.environ["HF_TOKEN"])
 
 
 BASE_DIR = Path(__file__).resolve().parent
-DEFAULT_MEDIA_DIR = BASE_DIR / "demos"
-DEFAULT_QUESTIONS = DEFAULT_MEDIA_DIR / "questions.json"
+DEFAULT_MEDIA_DIR = "/mnt/ssd1/dataset_ft_VLM/dataset_test"
 DEFAULT_OUTPUT_DIR = BASE_DIR / "results"
 
 # ----------------------------
@@ -66,7 +61,6 @@ VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Perception->Deterministic risk pipeline with vLLM-served VLMs (video-only).")
     parser.add_argument("--media-dir", type=Path, default=DEFAULT_MEDIA_DIR)
-    parser.add_argument("--questions", type=Path, default=DEFAULT_QUESTIONS)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--samples", type=int, default=None)
@@ -85,30 +79,8 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def load_questions(path: Path) -> List[Dict[str, Any]]:
-    if not path.exists():
-        raise FileNotFoundError(f"Questions file not found: {path}")
-    with path.open("r", encoding="utf-8") as fp:
-        data = json.load(fp)
-    if not isinstance(data, list):
-        raise ValueError(f"Questions JSON must be a list, found {type(data)}")
-    return data
-
-
 def _is_video(path: Path) -> bool:
     return path.suffix.lower() in VIDEO_EXTENSIONS
-
-
-def resolve_media_path(media_dir: Path, photo_id: str) -> Path:
-    candidate = media_dir / photo_id
-    if candidate.exists():
-        return candidate
-    if candidate.suffix == "":
-        for suffix in (".mp4", ".mov", ".avi", ".mkv", ".webm"):
-            alt = candidate.with_suffix(suffix)
-            if alt.exists():
-                return alt
-    raise FileNotFoundError(f"Media not found for photo_id '{photo_id}' -> {candidate}")
 
 
 def _sanitize_filename(value: str) -> str:
@@ -128,10 +100,16 @@ def process_questions(args: argparse.Namespace) -> None:
     logging.basicConfig(format="%(message)s", level=logging.INFO)
 
     media_dir: Path = args.media_dir
-    questions_path: Path = args.questions
     output_dir: Path = args.output_dir
-
-    questions = load_questions(questions_path)
+    if not media_dir.exists():
+        raise FileNotFoundError(f"Media directory not found: {media_dir}")
+    media_paths = sorted(
+        [
+            path
+            for path in media_dir.rglob("*")
+            if path.is_file() and _is_video(path)
+        ]
+    )
 
     selected_models: List[str] = []
     for model_key in args.model:
@@ -150,27 +128,12 @@ def process_questions(args: argparse.Namespace) -> None:
                 continue
 
             processed = 0
-            for entry in questions:
+            for media_path in media_paths:
                 if max_samples is not None and processed >= max_samples:
                     break
 
-                photo_id = entry.get("photo_id")
-                if not photo_id:
-                    logging.warning("Skipping malformed entry without photo_id: %s", entry)
-                    continue
-
-                try:
-                    media_path = resolve_media_path(media_dir, str(photo_id))
-                except FileNotFoundError as exc:
-                    logging.error(exc)
-                    continue
-
-                if not _is_video(media_path):
-                    logging.warning("Skipping non-video media (video-only mode): %s", media_path)
-                    continue
-
-                question_id = entry.get("question_id")
-                logging.info("Processing question_id=%s photo_id=%s with model=%s", question_id, photo_id, model_key)
+                photo_id = media_path.relative_to(media_dir).as_posix()
+                logging.info("Processing media=%s with model=%s", photo_id, model_key)
 
                 # ----------------------------
                 # Prompt: Perception JSON
@@ -185,7 +148,7 @@ def process_questions(args: argparse.Namespace) -> None:
                     except Exception as exc:
                         output_obj = {"error": f"json_parse_failed: {exc}", "raw_text": stage1.response_text}
 
-                base_name = _build_output_basename(question_id, str(photo_id))
+                base_name = _build_output_basename(None, str(photo_id))
                 model_name = model_key.replace("-", "_")
 
                 output_dir.mkdir(parents=True, exist_ok=True)
