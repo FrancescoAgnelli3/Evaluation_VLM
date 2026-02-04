@@ -35,27 +35,32 @@ VIDEO_USE_DATA_URL = os.environ.get("VIDEO_USE_DATA_URL", "1").strip() not in ("
 # Model identifiers (HF repos only)
 # ----------------------------
 
-QWEN_32B_REPO = os.environ.get("QWEN_32B_REPO", "Qwen/Qwen3-VL-30B-A3B-Thinking-FP8")
+QWEN_32B_REPO = os.environ.get("QWEN_32B_REPO", "Qwen/Qwen3-VL-32B-Thinking")
 QWEN_8B_REPO = os.environ.get("QWEN_8B_REPO", "Qwen/Qwen3-VL-8B-Thinking")
 QWEN_2B_REPO = os.environ.get("QWEN_2B_REPO", "Qwen/Qwen3-VL-2B-Thinking")
 QWEN_8B_FT_VISION_REPO = os.environ.get("QWEN_8B_FT_VISION_REPO","/mnt/ssd1/Qwen3-8B-FT/ft_vision/Qwen_FT_merged")
 QWEN_8B_FT_LLM_REPO = os.environ.get("QWEN_8B_FT_LLM_REPO","/mnt/ssd1/Qwen3-8B-FT/ft_llm/Qwen_FT_merged")
+QWEN_8B_FT_LLM_1K_REPO = os.environ.get("QWEN_8B_FT_LLM_1K_REPO","/mnt/ssd1/Qwen3-8B-FT/ft_llm_1k/Qwen_FT_merged")
 QWEN_8B_FT_BOTH_REPO = os.environ.get("QWEN_8B_FT_BOTH_REPO","/mnt/ssd1/Qwen3-8B-FT/ft_both/Qwen_FT_merged")
+QWEN_8B_FT_BOTH_1K_REPO = os.environ.get("QWEN_8B_FT_BOTH_1K_REPO","/mnt/ssd1/Qwen3-8B-FT/ft_both_1k/Qwen_FT_merged")
+QWEN_32B_FT_LLM_REPO = os.environ.get("QWEN_32B_FT_LLM_REPO","/mnt/ssd1/Qwen3-32B-FT/ft_llm/Qwen_FT_merged")
 
 COSMOS_REASON1_REPO = os.environ.get("COSMOS_REASON1_REPO", "nvidia/Cosmos-Reason1-7B")
 COSMOS_REASON2_2B_REPO = os.environ.get("COSMOS_REASON2_2B_REPO", "nvidia/Cosmos-Reason2-2B")
 COSMOS_REASON2_8B_REPO = os.environ.get("COSMOS_REASON2_8B_REPO", "nvidia/Cosmos-Reason2-8B")
 
 MODEL_CHOICES = (
-    "qwen-8B",
+    # "qwen-8B",
     "qwen-32B",
-    "qwen-8B-FT-vision",
-    "qwen-8B-FT-llm",
-    "qwen-8B-FT-both",
+    # "qwen-8B-FT-llm",
+    # "qwen-8B-FT-llm-1k",
+    # "qwen-8B-FT-both",
+    # "qwen-8B-FT-both-1k",
+    "qwen-32B-FT-llm",
     # "cosmos2-2B",
-    "cosmos2-8B",
-    "cosmos1",
-    "qwen-2B",
+    # "cosmos2-8B",
+    # "cosmos1",
+    # "qwen-2B",
     "all",
 )
 DEFAULT_MODEL_SELECTION = os.environ.get("DEFAULT_MODEL", "cosmos2-2B")
@@ -219,8 +224,14 @@ def _served_name_for(model_key: str) -> str:
         return os.environ.get("QWEN_VLLM_MODEL_NAME_8B_FT_VISION", "Qwen3-8B-FT-Vision")
     if model_key == "qwen-8B-FT-llm":
         return os.environ.get("QWEN_VLLM_MODEL_NAME_8B_FT_LLM", "Qwen3-8B-FT-LLM")
+    if model_key == "qwen-8B-FT-llm-1k":
+        return os.environ.get("QWEN_VLLM_MODEL_NAME_8B_FT_LLM_1K", "Qwen3-8B-FT-LLM-1k")
     if model_key == "qwen-8B-FT-both":
         return os.environ.get("QWEN_VLLM_MODEL_NAME_8B_FT_BOTH", "Qwen3-8B-FT-Both")
+    if model_key == "qwen-8B-FT-both-1k":
+        return os.environ.get("QWEN_VLLM_MODEL_NAME_8B_FT_BOTH_1K", "Qwen3-8B-FT-Both-1k")
+    if model_key == "qwen-32B-FT-llm":
+        return os.environ.get("QWEN_VLLM_MODEL_NAME_32B_FT_LLM", "Qwen3-32B-FT-LLM")
     if model_key == "cosmos1":
         return "Cosmos-Reason1"
     if model_key == "cosmos2-2B":
@@ -241,8 +252,14 @@ def _resolve_model_repo(model_key: str) -> str:
         return QWEN_8B_FT_VISION_REPO
     if model_key == "qwen-8B-FT-llm":
         return QWEN_8B_FT_LLM_REPO
+    if model_key == "qwen-8B-FT-llm-1k":
+        return QWEN_8B_FT_LLM_1K_REPO
     if model_key == "qwen-8B-FT-both":
         return QWEN_8B_FT_BOTH_REPO
+    if model_key == "qwen-8B-FT-both-1k":
+        return QWEN_8B_FT_BOTH_1K_REPO
+    if model_key == "qwen-32B-FT-llm":
+        return QWEN_32B_FT_LLM_REPO
     if model_key == "cosmos1":
         return COSMOS_REASON1_REPO
     if model_key == "cosmos2-2B":
