@@ -25,11 +25,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 # Ensure HF/torch caches are redirected before anything that may touch HF.
-os.environ.setdefault("HF_HOME", "/mnt/ssd1/hf")
-os.environ.setdefault("HF_HUB_CACHE", "/mnt/ssd1/hf/hub")
-os.environ.setdefault("TRANSFORMERS_CACHE", "/mnt/ssd1/hf/transformers")
-os.environ.setdefault("HF_DATASETS_CACHE", "/mnt/ssd1/hf/datasets")
-os.environ.setdefault("TORCH_HOME", "/mnt/ssd1/torch")
+os.environ.setdefault("HF_HOME", "/mnt/Repo/hf")
+os.environ.setdefault("HF_HUB_CACHE", "/mnt/Repo/hf/hub")
+os.environ.setdefault("TRANSFORMERS_CACHE", "/mnt/Repo/hf/transformers")
+os.environ.setdefault("HF_DATASETS_CACHE", "/mnt/Repo/hf/datasets")
+os.environ.setdefault("TORCH_HOME", "/mnt/Repo/torch")
 
 from huggingface_hub import login  # noqa: E402
 
@@ -45,7 +45,7 @@ login(token=os.environ["HF_TOKEN"])
 
 
 BASE_DIR = Path(__file__).resolve().parent
-DEFAULT_MEDIA_DIR = "/mnt/ssd1/dataset_ft_VLM/dataset_test"
+DEFAULT_MEDIA_DIR = "/mnt/Repo/VLM_ft/dataset_test_out"
 DEFAULT_OUTPUT_DIR = BASE_DIR / "results"
 
 # ----------------------------

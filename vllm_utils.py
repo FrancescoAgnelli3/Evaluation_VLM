@@ -19,17 +19,18 @@ VLLM_HOST = os.environ.get("VLLM_HOST", "127.0.0.1")
 VLLM_PORT = int(os.environ.get("VLLM_PORT", "11301"))
 DEFAULT_VLLM_BASE_URL = f"http://{VLLM_HOST}:{VLLM_PORT}/v1"
 
-VLLM_STARTUP_TIMEOUT = int(os.environ.get("VLLM_STARTUP_TIMEOUT", "300"))
+VLLM_STARTUP_TIMEOUT = int(os.environ.get("VLLM_STARTUP_TIMEOUT", "900"))
 VLLM_EXTRA_ARGS = shlex.split(os.environ.get("VLLM_EXTRA_ARGS", ""))
 
 # KV cache + memory safety defaults (kept for compatibility; vLLM args may use env elsewhere)
 VLLM_MAX_MODEL_LEN = int(os.environ.get("VLLM_MAX_MODEL_LEN", "70000"))
 VLLM_GPU_MEMORY_UTILIZATION = float(os.environ.get("VLLM_GPU_MEMORY_UTILIZATION", "0.90"))
 
-DEFAULT_TIMEOUT = float(os.environ.get("VLLM_TIMEOUT", "60"))
+DEFAULT_TIMEOUT = float(os.environ.get("VLLM_TIMEOUT", "3600"))
 DEFAULT_MAX_NEW_TOKENS = int(os.environ.get("MAX_NEW_TOKENS", "4096"))
 
 VIDEO_USE_DATA_URL = os.environ.get("VIDEO_USE_DATA_URL", "1").strip() not in ("0", "false", "False")
+
 
 # ----------------------------
 # Model identifiers (HF repos only)
@@ -38,12 +39,15 @@ VIDEO_USE_DATA_URL = os.environ.get("VIDEO_USE_DATA_URL", "1").strip() not in ("
 QWEN_32B_REPO = os.environ.get("QWEN_32B_REPO", "Qwen/Qwen3-VL-32B-Thinking")
 QWEN_8B_REPO = os.environ.get("QWEN_8B_REPO", "Qwen/Qwen3-VL-8B-Thinking")
 QWEN_2B_REPO = os.environ.get("QWEN_2B_REPO", "Qwen/Qwen3-VL-2B-Thinking")
-QWEN_8B_FT_VISION_REPO = os.environ.get("QWEN_8B_FT_VISION_REPO","/mnt/ssd1/Qwen3-8B-FT/ft_vision/Qwen_FT_merged")
-QWEN_8B_FT_LLM_REPO = os.environ.get("QWEN_8B_FT_LLM_REPO","/mnt/ssd1/Qwen3-8B-FT/ft_llm/Qwen_FT_merged")
-QWEN_8B_FT_LLM_1K_REPO = os.environ.get("QWEN_8B_FT_LLM_1K_REPO","/mnt/ssd1/Qwen3-8B-FT/ft_llm_1k/Qwen_FT_merged")
-QWEN_8B_FT_BOTH_REPO = os.environ.get("QWEN_8B_FT_BOTH_REPO","/mnt/ssd1/Qwen3-8B-FT/ft_both/Qwen_FT_merged")
-QWEN_8B_FT_BOTH_1K_REPO = os.environ.get("QWEN_8B_FT_BOTH_1K_REPO","/mnt/ssd1/Qwen3-8B-FT/ft_both_1k/Qwen_FT_merged")
-QWEN_32B_FT_LLM_REPO = os.environ.get("QWEN_32B_FT_LLM_REPO","/mnt/ssd1/Qwen3-32B-FT/ft_llm/Qwen_FT_merged")
+QWEN_8B_FT_VISION_REPO = os.environ.get("QWEN_8B_FT_VISION_REPO","/mnt/Repo/VLM_ft/models/Qwen3-8B-FT-vision")
+QWEN_8B_FT_LLM_REPO = os.environ.get("QWEN_8B_FT_LLM_REPO","/mnt/Repo/VLM_ft/models/Qwen3-8B-FT-llm")
+QWEN_8B_FT_LLM_1K_REPO = os.environ.get("QWEN_8B_FT_LLM_1K_REPO","/mnt/Repo/VLM_ft/models/Qwen3-8B-FT-llm_1k")
+QWEN_8B_FT_BOTH_REPO = os.environ.get("QWEN_8B_FT_BOTH_REPO","/mnt/Repo/VLM_ft/models/Qwen3-8B-FT-both")
+QWEN_8B_FT_BOTH_1K_REPO = os.environ.get("QWEN_8B_FT_BOTH_1K_REPO","/mnt/Repo/VLM_ft/models/Qwen3-8B-FT-both_1k")
+QWEN_32B_FT_LLM_REPO = os.environ.get("QWEN_32B_FT_LLM_REPO","/mnt/Repo/VLM_ft/models/Qwen3-32B_llm")
+QWEN_32B_FT_BOTH_REPO = os.environ.get("QWEN_32B_FT_BOTH_REPO","/mnt/Repo/VLM_ft/models/Qwen3-32B_both")
+QWEN_32B_FT_LLM_1K_REPO = os.environ.get("QWEN_32B_FT_LLM_1K_REPO","/mnt/Repo/VLM_ft/models/Qwen3-32B_llm_1k")
+QWEN_32B_FT_BOTH_1K_REPO = os.environ.get("QWEN_32B_FT_BOTH_1K_REPO","/mnt/Repo/VLM_ft/models/Qwen3-32B_both_1k")
 
 COSMOS_REASON1_REPO = os.environ.get("COSMOS_REASON1_REPO", "nvidia/Cosmos-Reason1-7B")
 COSMOS_REASON2_2B_REPO = os.environ.get("COSMOS_REASON2_2B_REPO", "nvidia/Cosmos-Reason2-2B")
@@ -51,12 +55,15 @@ COSMOS_REASON2_8B_REPO = os.environ.get("COSMOS_REASON2_8B_REPO", "nvidia/Cosmos
 
 MODEL_CHOICES = (
     # "qwen-8B",
+    # "qwen-32B-FT-llm",
+    # "qwen-32B-FT-both",
     "qwen-32B",
+    # "qwen-32B-FT-both-1k",
+    # "qwen-32B-FT-llm-1k",
     # "qwen-8B-FT-llm",
     # "qwen-8B-FT-llm-1k",
     # "qwen-8B-FT-both",
     # "qwen-8B-FT-both-1k",
-    "qwen-32B-FT-llm",
     # "cosmos2-2B",
     # "cosmos2-8B",
     # "cosmos1",
@@ -124,6 +131,8 @@ class VLLMServerManager:
             str(VLLM_MAX_MODEL_LEN),
             "--gpu-memory-utilization", 
             str(VLLM_GPU_MEMORY_UTILIZATION),
+            "--tensor-parallel-size",
+            "2",
         ]
         # if self.extra_args:
         #     cmd.extend(self.extra_args)
@@ -207,9 +216,9 @@ class VLLMServerManager:
 
 def _build_vllm_env() -> Dict[str, str]:
     env = dict(os.environ)
-    env["HF_HOME"] = os.environ.get("HF_HOME", "/mnt/ssd1/hf")
-    env["HF_HUB_CACHE"] = os.environ.get("HF_HUB_CACHE", "/mnt/ssd1/hf/hub")
-    env["TRANSFORMERS_CACHE"] = os.environ.get("TRANSFORMERS_CACHE", "/mnt/ssd1/hf/transformers")
+    env["HF_HOME"] = os.environ.get("HF_HOME", "/mnt/Repo/hf")
+    env["HF_HUB_CACHE"] = os.environ.get("HF_HUB_CACHE", "/mnt/Repo/hf/hub")
+    env["TRANSFORMERS_CACHE"] = os.environ.get("TRANSFORMERS_CACHE", "/mnt/Repo/hf/transformers")
     return env
 
 
@@ -232,6 +241,12 @@ def _served_name_for(model_key: str) -> str:
         return os.environ.get("QWEN_VLLM_MODEL_NAME_8B_FT_BOTH_1K", "Qwen3-8B-FT-Both-1k")
     if model_key == "qwen-32B-FT-llm":
         return os.environ.get("QWEN_VLLM_MODEL_NAME_32B_FT_LLM", "Qwen3-32B-FT-LLM")
+    if model_key == "qwen-32B-FT-both":
+        return os.environ.get("QWEN_VLLM_MODEL_NAME_32B_FT_BOTH", "Qwen3-32B-FT-Both")
+    if model_key == "qwen-32B-FT-llm-1k":
+        return os.environ.get("QWEN_VLLM_MODEL_NAME_32B_FT_LLM_1K", "Qwen3-32B-FT-LLM-1k")
+    if model_key == "qwen-32B-FT-both-1k":
+        return os.environ.get("QWEN_VLLM_MODEL_NAME_32B_FT_BOTH_1K", "Qwen3-32B-FT-Both-1k")
     if model_key == "cosmos1":
         return "Cosmos-Reason1"
     if model_key == "cosmos2-2B":
@@ -260,6 +275,12 @@ def _resolve_model_repo(model_key: str) -> str:
         return QWEN_8B_FT_BOTH_1K_REPO
     if model_key == "qwen-32B-FT-llm":
         return QWEN_32B_FT_LLM_REPO
+    if model_key == "qwen-32B-FT-both":
+        return QWEN_32B_FT_BOTH_REPO
+    if model_key == "qwen-32B-FT-llm-1k":
+        return QWEN_32B_FT_LLM_1K_REPO
+    if model_key == "qwen-32B-FT-both-1k":
+        return QWEN_32B_FT_BOTH_1K_REPO
     if model_key == "cosmos1":
         return COSMOS_REASON1_REPO
     if model_key == "cosmos2-2B":
