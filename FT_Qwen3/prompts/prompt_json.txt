@@ -1,0 +1,245 @@
+You are analyzing a sequence of frames extracted in temporal order from a road traffic video.
+
+Your task is to produce a structured road-safety assessment in JSON format.
+
+You must follow two independent layers:
+(1) epistemic rules (what is visible vs what is uncertain)
+(2) the output schema (what fields must exist)
+
+Output ONLY valid JSON.
+Do NOT include explanations, markdown, or extra text.
+
+────────────────────────────────────────────
+EPISTEMIC RULES
+────────────────────────────────────────────
+
+1. Visibility vs uncertainty
+Each observable element must be classified as either:
+- NOT VISIBLE in the frames
+- VISIBLE (even if ambiguous)
+
+Use:
+- `"visible": false` only when the element is not visible at all.
+- `"visible": true` when the element appears in the frames, even if unclear.
+
+If `"visible": true`:
+- You MUST provide a `"value"` (even if uncertain).
+- You MUST provide a `"confidence"` in [0,1].
+
+If something is visible but cannot be determined with certainty, use:
+- `"value": "unknown"`
+and assign a low confidence.
+
+Do NOT use null for uncertainty.
+Null is allowed only for entire structures that are logically not applicable (see Rule 3).
+
+2. Estimation rule
+When something is visible but ambiguous (e.g., lane count, markings, signs), choose the most plausible interpretation and lower the confidence.
+Do not avoid making an estimate just because it is uncertain.
+
+3. Lane → traffic dependency
+- If `number_of_lanes.visible = true`, you MUST output exactly one `traffic_status` entry per lane.
+- If `number_of_lanes.visible = false`, then `traffic_status` MUST be `null`.
+
+4. Events
+- If no vehicle events are observed, output `vehicle_events` as an empty array.
+- If no pedestrian events are observed, output `pedestrian_events` as an empty array.
+- If multiple entities perform the same behavior, represent them as ONE event with a `"count"` field.
+
+5. No hallucination
+Do not invent objects, signs, lights, or events that are not supported by the frames.
+
+────────────────────────────────────────────
+OUTPUT SCHEMA
+────────────────────────────────────────────
+
+The JSON object must have exactly this structure.
+Placeholders indicate types, not default values.
+
+{
+    "road_composition": {
+        "number_of_lanes": {
+            "visible": "<boolean>",
+            "value": "<integer or unknown>",
+            "confidence": "<number>"
+        },
+        "lane_directions": {
+            "visible": "<boolean>",
+            "value": "one_way | two_way | unknown",
+            "confidence": "<number>"
+        },
+        "road_type": {
+            "visible": "<boolean>",
+            "value": "urban | suburban | highway | pedestrian_zone | unknown",
+            "confidence": "<number>"
+        },
+        "pedestrian_crossings": {
+            "visible": "<boolean>",
+            "present": {
+                "value": "<boolean>",
+                "confidence": "<number>"
+            },
+            "type": {
+                "value": "zebra | traffic_light_controlled | other | unknown",
+                "confidence": "<number>"
+            }
+        },
+        "traffic_lights": {
+            "visible": "<boolean>",
+            "present": {
+                "value": "<boolean>",
+                "confidence": "<number>"
+            },
+            "visible_state": {
+                "value": "red | yellow | green | unknown",
+                "confidence": "<number>"
+            }
+        },
+        "horizontal_signage": {
+            "visible": "<boolean>",
+            "lane_markings": {
+                "value": "<boolean>",
+                "confidence": "<number>"
+            },
+            "stop_lines": {
+                "value": "<boolean>",
+                "confidence": "<number>"
+            },
+            "other_markings": {
+                "value": "<boolean>",
+                "confidence": "<number>"
+            }
+        },
+        "vertical_signage": {
+            "visible": "<boolean>",
+            "speed_limit": {
+                "value": "<integer or unknown>",
+                "confidence": "<number>"
+            },
+            "warning_signs": {
+                "value": "<boolean>",
+                "confidence": "<number>"
+            },
+            "prohibition_signs": {
+                "value": "<boolean>",
+                "confidence": "<number>"
+            }
+        }
+    },
+    "environmental_conditions": {
+        "weather": {
+            "visible": "<boolean>",
+            "value": "clear | rain | snow | fog | storm | unknown",
+            "confidence": "<number>"
+        },
+        "precipitation_intensity": {
+            "visible": "<boolean>",
+            "value": "none | light | moderate | heavy | unknown",
+            "confidence": "<number>"
+        },
+        "ambient_visibility": {
+            "visible": "<boolean>",
+            "value": "good | reduced | poor | unknown",
+            "confidence": "<number>"
+        },
+        "road_surface_condition": {
+            "visible": "<boolean>",
+            "value": "dry | wet | icy | snow_covered | unknown",
+            "confidence": "<number>"
+        },
+        "lighting_conditions": {
+            "visible": "<boolean>",
+            "value": "daylight | dusk_dawn | night | artificial_lighting | unknown",
+            "confidence": "<number>"
+        },
+        "wind_conditions": {
+            "visible": "<boolean>",
+            "value": "calm | windy | strong_wind | unknown",
+            "confidence": "<number>"
+        }
+    },
+    "traffic_status": "<null or array of { 'lane_id': <integer>, 'status': { 'value': 'free | slow | congested | stopped', 'confidence': <number> }, 'vehicle_density': { 'value': 'low | medium | high', 'confidence': <number> } }>",
+    "vehicle_events": [
+        {
+            "event_type": "speeding | red_light_violation | illegal_lane_change | wrong_direction | illegal_stop | other",
+            "description": "<string>",
+            "involved_vehicle_type": "car | truck | motorcycle | bus | unknown",
+            "risk_level": "low | medium | high",
+            "confidence": "<number>",
+            "count": "<integer>"
+        }
+    ],
+    "pedestrian_events": [
+        {
+            "behavior": "crossing_legally | jaywalking | waiting | standing_in_road | other",
+            "location": "crosswalk | sidewalk | roadway | median | unknown",
+            "interaction_with_vehicles": "none | near_miss | conflict",
+            "risk_level": "low | medium | high",
+            "confidence": "<number>",
+            "count": "<integer>"
+        }
+    ],
+    "Risk Assessment": [
+        {
+            "observations": {
+                "crossed_intersection": {
+                    "visible": "<boolean>",
+                    "value": "<boolean or \"unknown\">",
+                    "confidence": "<number>",
+                    "vehicle_ids": "<array of strings>"
+                },
+                "motorcycle_without_helmet_observed": {
+                    "visible": "<boolean>",
+                    "value": "<boolean or \"unknown\">",
+                    "confidence": "<number>",
+                    "vehicle_ids": "<array of strings>"
+                },
+                "lane_change_observed": {
+                    "visible": "<boolean>",
+                    "value": "<boolean or \"unknown\">",
+                    "confidence": "<number>",
+                    "vehicle_ids": "<array of strings>"
+                },
+                "tailgating_observed": {
+                    "visible": "<boolean>",
+                    "value": "<boolean or \"unknown\">",
+                    "confidence": "<number>",
+                    "pairs": "<array of { \"leader_id\": <string>, \"follower_id\": <string> }>"
+                },
+                "wrong_direction_observed": {
+                    "visible": "<boolean>",
+                    "value": "<boolean or \"unknown\">",
+                    "confidence": "<number>",
+                    "vehicle_ids": "<array of strings>"
+                },
+                "blocking_stop_line_or_crosswalk_observed": {
+                    "visible": "<boolean>",
+                    "value": "<boolean or \"unknown\">",
+                    "confidence": "<number>",
+                    "vehicle_ids": "<array of strings>"
+                },
+                "stopped_in_travel_lane_observed": {
+                    "visible": "<boolean>",
+                    "value": "<boolean or \"unknown\">",
+                    "confidence": "<number>",
+                    "vehicle_ids": "<array of strings>"
+                },
+                "likely_high_speed_observed": {
+                    "visible": "<boolean>",
+                    "value": "<boolean or \"unknown\">",
+                    "confidence": "<number>",
+                    "vehicle_ids": "<array of strings>"
+                }
+            },
+            "overall_risk_assessment": {
+                "risk_level": {
+                    "value": "low | medium | high",
+                    "confidence": "<number>"
+                },
+                "main_risk_factors": "<array of strings>"
+            }
+        }
+    ]
+}
+
+Output MUST be valid JSON and respect all rules above.

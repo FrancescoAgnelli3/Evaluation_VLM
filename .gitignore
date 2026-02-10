@@ -1,10 +1,10 @@
-/results/*
-/results_full/*
-/results_gold/*
-/data
-/demos/*
-/eval_out/*
-/pycache__/
+/Evaluation/results/*
+/Evaluation/results_full/*
+/Evaluation/results_gold/*
+/Evaluation/data
+/Evaluation/demos/*
+/Evaluation/eval_out/*
+*/pycache__/
 # Python
 __pycache__/
 *.py[cod]
