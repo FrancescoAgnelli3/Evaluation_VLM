@@ -24,12 +24,12 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-# Ensure HF/torch caches are redirected before anything that may touch HF.
-os.environ.setdefault("HF_HOME", "/mnt/Repo/hf")
-os.environ.setdefault("HF_HUB_CACHE", "/mnt/Repo/hf/hub")
-os.environ.setdefault("TRANSFORMERS_CACHE", "/mnt/Repo/hf/transformers")
-os.environ.setdefault("HF_DATASETS_CACHE", "/mnt/Repo/hf/datasets")
-os.environ.setdefault("TORCH_HOME", "/mnt/Repo/torch")
+# # Ensure HF/torch caches are redirected before anything that may touch HF.
+# os.environ.setdefault("HF_HOME", "/mnt/Repo/hf")
+# os.environ.setdefault("HF_HUB_CACHE", "/mnt/Repo/hf/hub")
+# os.environ.setdefault("TRANSFORMERS_CACHE", "/mnt/Repo/hf/transformers")
+# os.environ.setdefault("HF_DATASETS_CACHE", "/mnt/Repo/hf/datasets")
+# os.environ.setdefault("TORCH_HOME", "/mnt/Repo/torch")
 
 from huggingface_hub import login  # noqa: E402
 
@@ -45,7 +45,7 @@ login(token=os.environ["HF_TOKEN"])
 
 
 BASE_DIR = Path(__file__).resolve().parent
-DEFAULT_MEDIA_DIR = "/mnt/Repo/VLM_ft/dataset_test_out"
+DEFAULT_MEDIA_DIR = "/opt/dataset/test_dataset"
 DEFAULT_OUTPUT_DIR = BASE_DIR / "results"
 
 # ----------------------------
@@ -82,7 +82,9 @@ def parse_args() -> argparse.Namespace:
         "-m",
         action="append",
         choices=MODEL_CHOICES,
-        help="Vision-language model(s) to run. Provide multiple times; default is cosmos2-2B.",
+        help=(
+            "Vision-language model(s) to run. Provide multiple times; default is cosmos2-2B. "
+        ),
     )
     args = parser.parse_args()
     if not args.model:

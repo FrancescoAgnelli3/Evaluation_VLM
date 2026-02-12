@@ -46,7 +46,7 @@ import numpy as np
 import pandas as pd
 
 BASE_DIR = Path(__file__).resolve().parent
-GT_DIR = "/mnt/Repo/VLM_ft/dataset_test_out_json"
+GT_DIR = "/opt/dataset/test_dataset_json"
 
 
 # ----------------------------

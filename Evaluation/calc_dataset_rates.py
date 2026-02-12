@@ -11,7 +11,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--json-dir",
-        default="/mnt/ssd1/dataset_ft_VLM/Dataset_v2_json_final_prompt",
+        default="/opt/dataset/train_dataset_json",
         help="Folder containing JSON files to validate.",
     )
     args = parser.parse_args()

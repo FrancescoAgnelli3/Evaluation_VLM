@@ -1,6 +1,5 @@
 /Evaluation/results/*
-/Evaluation/results_full/*
-/Evaluation/results_gold/*
+/Evaluation/results_old/*
 /Evaluation/data
 /Evaluation/demos/*
 /Evaluation/eval_out/*

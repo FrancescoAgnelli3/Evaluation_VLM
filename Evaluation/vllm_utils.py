@@ -6,6 +6,7 @@ import logging
 import os
 import shlex
 import signal
+import socket
 import subprocess
 import time
 from collections import OrderedDict
@@ -16,7 +17,7 @@ import requests
 from openai import OpenAI
 
 VLLM_HOST = os.environ.get("VLLM_HOST", "127.0.0.1")
-VLLM_PORT = int(os.environ.get("VLLM_PORT", "11301"))
+VLLM_PORT = int(os.environ.get("VLLM_PORT", "0"))
 DEFAULT_VLLM_BASE_URL = f"http://{VLLM_HOST}:{VLLM_PORT}/v1"
 
 VLLM_STARTUP_TIMEOUT = int(os.environ.get("VLLM_STARTUP_TIMEOUT", "900"))
@@ -52,12 +53,14 @@ QWEN_32B_FT_BOTH_1K_REPO = os.environ.get("QWEN_32B_FT_BOTH_1K_REPO","/mnt/Repo/
 COSMOS_REASON1_REPO = os.environ.get("COSMOS_REASON1_REPO", "nvidia/Cosmos-Reason1-7B")
 COSMOS_REASON2_2B_REPO = os.environ.get("COSMOS_REASON2_2B_REPO", "nvidia/Cosmos-Reason2-2B")
 COSMOS_REASON2_8B_REPO = os.environ.get("COSMOS_REASON2_8B_REPO", "nvidia/Cosmos-Reason2-8B")
+COSMOS_REASON2_LORAFT_REPO = os.environ.get("COSMOS_REASON2_LORAFT_REPO","/opt/models/Cosmos-Reason2-FT/LoRA/merged")
+COSMOS_REASON2_FULLFT_REPO = os.environ.get("COSMOS_REASON2_FULLFT_REPO","/opt/models/Cosmos-Reason2-FT/full_FT/20260212090654/safetensors/step_565",)
 
 MODEL_CHOICES = (
     # "qwen-8B",
     # "qwen-32B-FT-llm",
     # "qwen-32B-FT-both",
-    "qwen-32B",
+    # "qwen-32B",
     # "qwen-32B-FT-both-1k",
     # "qwen-32B-FT-llm-1k",
     # "qwen-8B-FT-llm",
@@ -65,7 +68,9 @@ MODEL_CHOICES = (
     # "qwen-8B-FT-both",
     # "qwen-8B-FT-both-1k",
     # "cosmos2-2B",
-    # "cosmos2-8B",
+    "cosmos2-8B",
+    # "cosmos2-reason-LoRAFT",
+    "cosmos2-reason-fullFT",
     # "cosmos1",
     # "qwen-2B",
     "all",
@@ -75,6 +80,33 @@ DEFAULT_MODEL_SELECTION = os.environ.get("DEFAULT_MODEL", "cosmos2-2B")
 JSON_MODE_RESPONSE_FORMAT: Dict[str, object] = {"type": "json_object"}
 
 _VLLM_SERVER_MANAGER: Optional["VLLMServerManager"] = None
+
+
+def _count_available_gpus(env: Dict[str, str]) -> int:
+    cvd = env.get("CUDA_VISIBLE_DEVICES")
+    if cvd is not None:
+        raw = cvd.strip()
+        if raw in ("", "-1", "none", "None"):
+            return 0
+        return len([x for x in raw.split(",") if x.strip()])
+
+    try:
+        output = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=index", "--format=csv,noheader"],
+            text=True,
+            timeout=5,
+        )
+        return len([line for line in output.splitlines() if line.strip()])
+    except Exception:
+        return 0
+
+
+def _choose_vllm_port(host: str) -> int:
+    if VLLM_PORT > 0:
+        return VLLM_PORT
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind((host, 0))
+        return int(sock.getsockname()[1])
 
 
 def wait_ready(url: str, timeout_s: int = 120) -> None:
@@ -117,6 +149,10 @@ class VLLMServerManager:
         if self._proc and self._proc.poll() is None:
             return
 
+        num_gpus = _count_available_gpus(self.env)
+        if num_gpus < 1:
+            raise RuntimeError("No GPUs available for vLLM (CUDA_VISIBLE_DEVICES may be empty or invalid).")
+
         cmd = [
             "vllm",
             "serve",
@@ -132,7 +168,7 @@ class VLLMServerManager:
             "--gpu-memory-utilization", 
             str(VLLM_GPU_MEMORY_UTILIZATION),
             "--tensor-parallel-size",
-            "2",
+            str(num_gpus),
         ]
         # if self.extra_args:
         #     cmd.extend(self.extra_args)
@@ -214,11 +250,14 @@ class VLLMServerManager:
             # If this happens, something is seriously wrong at OS level; give up.
             pass
 
-def _build_vllm_env() -> Dict[str, str]:
+def _build_vllm_env(cuda_visible_devices: Optional[str] = None) -> Dict[str, str]:
     env = dict(os.environ)
-    env["HF_HOME"] = os.environ.get("HF_HOME", "/mnt/Repo/hf")
-    env["HF_HUB_CACHE"] = os.environ.get("HF_HUB_CACHE", "/mnt/Repo/hf/hub")
-    env["TRANSFORMERS_CACHE"] = os.environ.get("TRANSFORMERS_CACHE", "/mnt/Repo/hf/transformers")
+    if cuda_visible_devices is not None:
+        env["CUDA_VISIBLE_DEVICES"] = cuda_visible_devices
+    tok = env.get("HF_TOKEN") or env.get("HUGGING_FACE_HUB_TOKEN")
+    if tok:
+        env["HF_TOKEN"] = tok
+        env["HUGGING_FACE_HUB_TOKEN"] = tok
     return env
 
 
@@ -253,6 +292,10 @@ def _served_name_for(model_key: str) -> str:
         return "Cosmos-Reason2-2B"
     if model_key == "cosmos2-8B":
         return "Cosmos-Reason2-8B"
+    if model_key == "cosmos2-reason-LoRAFT":
+        return os.environ.get("COSMOS_REASON2_LORAFT_NAME", "Cosmos-Reason2-LoRAFT")
+    if model_key == "cosmos2-reason-fullFT":
+        return os.environ.get("COSMOS_REASON2_FULLFT_NAME", "Cosmos-Reason2-FullFT")
     raise ValueError(f"Unknown model_key: {model_key}")
 
 
@@ -287,24 +330,39 @@ def _resolve_model_repo(model_key: str) -> str:
         return COSMOS_REASON2_2B_REPO
     if model_key == "cosmos2-8B":
         return COSMOS_REASON2_8B_REPO
+    if model_key == "cosmos2-reason-LoRAFT":
+        return COSMOS_REASON2_LORAFT_REPO
+    if model_key == "cosmos2-reason-fullFT":
+        return COSMOS_REASON2_FULLFT_REPO
     raise ValueError(f"Unknown model_key: {model_key}")
 
 
-def _ensure_vllm_server(model_key: str) -> VLLMServerManager:
+def _ensure_vllm_server(model_key: str, cuda_visible_devices: Optional[str] = None) -> VLLMServerManager:
     global _VLLM_SERVER_MANAGER
 
-    if _VLLM_SERVER_MANAGER and _VLLM_SERVER_MANAGER.model_key != model_key:
+    requested_cuda_visible_devices = (
+        cuda_visible_devices if cuda_visible_devices is not None else os.environ.get("CUDA_VISIBLE_DEVICES")
+    )
+    current_cuda_visible_devices = (
+        _VLLM_SERVER_MANAGER.env.get("CUDA_VISIBLE_DEVICES") if _VLLM_SERVER_MANAGER else None
+    )
+
+    if _VLLM_SERVER_MANAGER and (
+        _VLLM_SERVER_MANAGER.model_key != model_key
+        or current_cuda_visible_devices != requested_cuda_visible_devices
+    ):
         _VLLM_SERVER_MANAGER.stop()
         _VLLM_SERVER_MANAGER = None
 
     if _VLLM_SERVER_MANAGER is None:
-        env = _build_vllm_env()
+        env = _build_vllm_env(cuda_visible_devices=cuda_visible_devices)
+        port = _choose_vllm_port(VLLM_HOST)
         model_repo = _resolve_model_repo(model_key)
         served_model_name = _served_name_for(model_key)
         manager = VLLMServerManager(
             model_key=model_key,
             host=VLLM_HOST,
-            port=VLLM_PORT,
+            port=port,
             model_repo=model_repo,
             served_model_name=served_model_name,
             timeout_s=VLLM_STARTUP_TIMEOUT,
@@ -378,13 +436,20 @@ class VLLMClient:
     Video-only: uses `video_url` with a data URL (base64).
     """
 
-    def __init__(self, model_key: str, base_url: str = DEFAULT_VLLM_BASE_URL, timeout: float = DEFAULT_TIMEOUT) -> None:
+    def __init__(
+        self,
+        model_key: str,
+        base_url: Optional[str] = None,
+        timeout: float = DEFAULT_TIMEOUT,
+        cuda_visible_devices: Optional[str] = None,
+    ) -> None:
         self.model_key = model_key
-        manager = _ensure_vllm_server(model_key)
+        manager = _ensure_vllm_server(model_key, cuda_visible_devices=cuda_visible_devices)
         self.model_name = manager.served_model_name
         api_key = os.environ.get("OPENAI_API_KEY", "EMPTY")
-        self.client = OpenAI(api_key=api_key, base_url=base_url.rstrip("/"), timeout=timeout)
-        logging.info("[Client] Using vLLM at %s with model='%s' (key=%s)", base_url.rstrip("/"), self.model_name, model_key)
+        resolved_base_url = base_url.rstrip("/") if base_url else f"http://{manager.host}:{manager.port}/v1"
+        self.client = OpenAI(api_key=api_key, base_url=resolved_base_url, timeout=timeout)
+        logging.info("[Client] Using vLLM at %s with model='%s' (key=%s)", resolved_base_url, self.model_name, model_key)
 
     def _request(
         self,
@@ -502,13 +567,19 @@ def shutdown_client(client: Optional[VLMClientType]) -> None:
         close_fn()
 
 
-def ensure_clients(model_keys: List[str]) -> OrderedDict[str, Optional[VLMClientType]]:
+def ensure_clients(
+    model_keys: List[str],
+    cuda_visible_devices: Optional[str] = None,
+) -> OrderedDict[str, Optional[VLMClientType]]:
     clients: OrderedDict[str, Optional[VLMClientType]] = OrderedDict()
     for model_key in model_keys:
         if model_key in clients:
             continue
         try:
-            clients[model_key] = VLLMClient(model_key=model_key)
+            clients[model_key] = VLLMClient(
+                model_key=model_key,
+                cuda_visible_devices=cuda_visible_devices,
+            )
         except Exception as exc:
             logging.error("Unable to initialize %s: %s", model_key, exc)
             clients[model_key] = None
