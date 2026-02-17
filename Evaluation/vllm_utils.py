@@ -54,25 +54,40 @@ COSMOS_REASON1_REPO = os.environ.get("COSMOS_REASON1_REPO", "nvidia/Cosmos-Reaso
 COSMOS_REASON2_2B_REPO = os.environ.get("COSMOS_REASON2_2B_REPO", "nvidia/Cosmos-Reason2-2B")
 COSMOS_REASON2_8B_REPO = os.environ.get("COSMOS_REASON2_8B_REPO", "nvidia/Cosmos-Reason2-8B")
 COSMOS_REASON2_LORAFT_REPO = os.environ.get("COSMOS_REASON2_LORAFT_REPO","/opt/models/Cosmos-Reason2-FT/LoRA/merged")
-COSMOS_REASON2_FULLFT_REPO = os.environ.get("COSMOS_REASON2_FULLFT_REPO","/opt/models/Cosmos-Reason2-FT/full_FT/20260212090654/safetensors/step_565",)
+COSMOS_REASON2_FULLFT_REPO = os.environ.get("COSMOS_REASON2_FULLFT_REPO","/opt/models/Cosmos-Reason2-FT/full_FT/20260213125848/safetensors/step_745",)
+COSMOS_REASON2_FULLFT_10K_REPO = os.environ.get(
+    "COSMOS_REASON2_FULLFT_10K_REPO",
+    "/opt/models/Cosmos-Reason2-FT/full_FT/dataset_10k/safetensors/step_745",
+)
+COSMOS_REASON2_FULLFT_5K_REPO = os.environ.get(
+    "COSMOS_REASON2_FULLFT_5K_REPO",
+    "/opt/models/Cosmos-Reason2-FT/full_FT/dataset_5k/safetensors/step_390",
+)
+COSMOS_REASON2_FULLFT_2K_REPO = os.environ.get(
+    "COSMOS_REASON2_FULLFT_2K_REPO",
+    "/opt/models/Cosmos-Reason2-FT/full_FT/dataset_2k/safetensors/step_155",
+)
 
 MODEL_CHOICES = (
-    # "qwen-8B",
+    "qwen-8B",
     # "qwen-32B-FT-llm",
     # "qwen-32B-FT-both",
-    # "qwen-32B",
+    "qwen-32B",
     # "qwen-32B-FT-both-1k",
     # "qwen-32B-FT-llm-1k",
     # "qwen-8B-FT-llm",
     # "qwen-8B-FT-llm-1k",
     # "qwen-8B-FT-both",
     # "qwen-8B-FT-both-1k",
-    # "cosmos2-2B",
-    "cosmos2-8B",
+    "cosmos2-2B",
+    # "cosmos2-8B",
     # "cosmos2-reason-LoRAFT",
-    "cosmos2-reason-fullFT",
-    # "cosmos1",
-    # "qwen-2B",
+    # "cosmos2-reason-fullFT",
+    # "cosmos2-reason-fullFT-10k",
+    # "cosmos2-reason-fullFT-5k",
+    # "cosmos2-reason-fullFT-2k",
+    "cosmos1",
+    "qwen-2B",
     "all",
 )
 DEFAULT_MODEL_SELECTION = os.environ.get("DEFAULT_MODEL", "cosmos2-2B")
@@ -296,6 +311,12 @@ def _served_name_for(model_key: str) -> str:
         return os.environ.get("COSMOS_REASON2_LORAFT_NAME", "Cosmos-Reason2-LoRAFT")
     if model_key == "cosmos2-reason-fullFT":
         return os.environ.get("COSMOS_REASON2_FULLFT_NAME", "Cosmos-Reason2-FullFT")
+    if model_key == "cosmos2-reason-fullFT-10k":
+        return os.environ.get("COSMOS_REASON2_FULLFT_10k_NAME", "Cosmos-Reason2-FullFT-10k")
+    if model_key == "cosmos2-reason-fullFT-5k":
+        return os.environ.get("COSMOS_REASON2_FULLFT_5K_NAME", "Cosmos-Reason2-FullFT-5k")
+    if model_key == "cosmos2-reason-fullFT-2k":
+        return os.environ.get("COSMOS_REASON2_FULLFT_2K_NAME", "Cosmos-Reason2-FullFT-2k")
     raise ValueError(f"Unknown model_key: {model_key}")
 
 
@@ -334,6 +355,12 @@ def _resolve_model_repo(model_key: str) -> str:
         return COSMOS_REASON2_LORAFT_REPO
     if model_key == "cosmos2-reason-fullFT":
         return COSMOS_REASON2_FULLFT_REPO
+    if model_key == "cosmos2-reason-fullFT-10k":
+        return COSMOS_REASON2_FULLFT_10K_REPO
+    if model_key == "cosmos2-reason-fullFT-5k":
+        return COSMOS_REASON2_FULLFT_5K_REPO
+    if model_key == "cosmos2-reason-fullFT-2k":
+        return COSMOS_REASON2_FULLFT_2K_REPO
     raise ValueError(f"Unknown model_key: {model_key}")
 
 

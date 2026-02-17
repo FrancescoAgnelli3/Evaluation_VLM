@@ -108,6 +108,17 @@ def _build_output_basename(question_id: Optional[str], photo_id: str) -> str:
     base_prefix = f"{question_id or 'question'}_{Path(str(photo_id)).stem}"
     return _sanitize_filename(base_prefix)
 
+def _output_path(
+    media_path: Path,
+    media_dir: Path,
+    output_dir: Path,
+    model_key: str,
+) -> Path:
+    photo_id = media_path.relative_to(media_dir).as_posix()
+    base_name = _build_output_basename(None, str(photo_id))
+    model_name = model_key.replace("-", "_")
+    return output_dir / f"{base_name}_{model_name}.json"
+
 
 # ----------------------------
 # Inference worker
@@ -183,11 +194,17 @@ def process_questions(args: argparse.Namespace) -> None:
             logging.info("Model=%s | videos=%d | workers=%d", model_key, len(this_media), args.workers)
 
             processed = 0
+            skipped = 0
 
             if args.workers == 1:
                 # Original serial behavior.
                 for media_path in this_media:
                     photo_id = media_path.relative_to(media_dir).as_posix()
+                    out_path = _output_path(media_path, media_dir, output_dir, model_key)
+                    if out_path.exists():
+                        logging.info("Skip existing result for media=%s with model=%s", photo_id, model_key)
+                        skipped += 1
+                        continue
                     logging.info("Processing media=%s with model=%s", photo_id, model_key)
 
                     out_path, output_obj = _infer_one(client, media_path, media_dir, output_dir, model_key)
@@ -202,10 +219,20 @@ def process_questions(args: argparse.Namespace) -> None:
                 # If your client wrapper is NOT thread-safe, the safer pattern is to instantiate a separate
                 # lightweight HTTP client per worker. With the current wrapper, try this first; if you see
                 # weird errors, rework vllm_utils so each worker has its own client instance.
+                pending_media = []
+                for media_path in this_media:
+                    out_path = _output_path(media_path, media_dir, output_dir, model_key)
+                    if out_path.exists():
+                        photo_id = media_path.relative_to(media_dir).as_posix()
+                        logging.info("Skip existing result for media=%s with model=%s", photo_id, model_key)
+                        skipped += 1
+                        continue
+                    pending_media.append(media_path)
+
                 with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
                     future_to_media = {
                         ex.submit(_infer_one, client, media_path, media_dir, output_dir, model_key): media_path
-                        for media_path in this_media
+                        for media_path in pending_media
                     }
 
                     for fut in cf.as_completed(future_to_media):
@@ -238,7 +265,12 @@ def process_questions(args: argparse.Namespace) -> None:
 
             # One-server-at-a-time: stop between models to avoid port collisions and ensure correct model loaded.
             shutdown_vllm_server()
-            logging.info("Completed model=%s | processed=%d", model_key, processed)
+            logging.info(
+                "Completed model=%s | processed=%d | skipped=%d",
+                model_key,
+                processed,
+                skipped,
+            )
 
         logging.info("Processed %s entries", processed_total)
     finally:

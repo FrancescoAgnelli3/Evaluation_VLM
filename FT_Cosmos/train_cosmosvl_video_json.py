@@ -116,8 +116,11 @@ def _collect_examples(video_dir: str, json_dir: str) -> List[Dict[str, str]]:
         if not jp.exists():
             missing += 1
             continue
-        with open(jp, "r", encoding="utf-8") as f:
-            label_obj = json.load(f)
+        try:
+            with open(jp, "r", encoding="utf-8") as f:
+                label_obj = json.load(f)
+        except json.JSONDecodeError as e:
+            print(f"Invalid JSON in label file: {jp} ({e})")
         label_str = label_obj if isinstance(label_obj, str) else json.dumps(label_obj, ensure_ascii=False)
         ex.append({"video": str(vp.resolve()), "label": label_str})
 
