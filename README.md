@@ -128,6 +128,37 @@ NUM_GPUS=4 bash FT_Qwen3/run.sh \
 Scripts live in `FT_Cosmos/`. This training script uses TRL SFTTrainer and has
 an internal multi-process launcher when multiple GPUs are available.
 
+### Full fine-tuning Cosmos (Cosmos-Reason2 repo)
+
+1) Clone the upstream repo
+
+```bash
+git clone https://github.com/nvidia-cosmos/cosmos-reason2.git
+```
+
+2) Copy our config into the Cosmos repo
+
+```bash
+cp Evaluation_VLM/utils_cosmos/my_sft_8gpu.toml \
+  cosmos-reason2/examples/cosmos_rl/configs/
+```
+
+3) Edit the TOML as needed (model, dataset, output)
+
+Update `cosmos-reason2/examples/cosmos_rl/configs/my_sft_8gpu.toml` to point to
+your base model, dataset, and output folder.
+
+4) Launch full FT (8 GPUs)
+
+```bash
+cd cosmos-reason2
+source .venv/bin/activate
+cd examples/cosmos_rl
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
+  uv run cosmos-rl --config configs/my_sft_8gpu.toml \
+  --log-dir outputs/my_sft_8gpu scripts/llava_sft.py
+```
+
 1) Prepare data
 
 - Videos in `VIDEO_DIR` and JSON labels in `JSON_DIR`.
