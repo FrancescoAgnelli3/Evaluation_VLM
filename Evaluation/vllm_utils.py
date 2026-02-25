@@ -83,18 +83,18 @@ COSMOS_REASON2_LORAFT_8B_17K_REPO = os.environ.get(
 )
 
 MODEL_CHOICES = (
-    # "qwen-8B",
+    "qwen-8B",
     # "qwen-32B-FT-llm",
     # "qwen-32B-FT-both",
-    # "qwen-32B",
+    "qwen-32B",
     # "qwen-32B-FT-both-1k",
     # "qwen-32B-FT-llm-1k",
     # "qwen-8B-FT-llm",
     # "qwen-8B-FT-llm-1k",
     # "qwen-8B-FT-both",
     # "qwen-8B-FT-both-1k",
-    # "cosmos2-2B",
-    # "cosmos2-8B",
+    "cosmos2-2B",
+    "cosmos2-8B",
     # "cosmos2-reason-LoRAFT_13k-2B",
     # "cosmos2-reason-LoRAFT_13k-8B",
     # "cosmos2-reason-fullFT_13k-2B",
@@ -105,8 +105,8 @@ MODEL_CHOICES = (
     "cosmos2-reason-fullFT_17k-8B",
     "cosmos2-reason-LoRAFT_17k-2B",
     "cosmos2-reason-LoRAFT_17k-8B",
-    # "cosmos1",
-    # "qwen-2B",
+    "cosmos1",
+    "qwen-2B",
     "all",
 )
 DEFAULT_MODEL_SELECTION = os.environ.get("DEFAULT_MODEL", "cosmos2-2B")

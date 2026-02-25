@@ -117,6 +117,46 @@ NUM_GPUS=4 bash FT_Qwen3/run.sh \
 Scripts live in `FT_Cosmos/`. This training script uses TRL SFTTrainer and has
 an internal multi-process launcher when multiple GPUs are available.
 
+## Build Cosmos full-FT dataset (LLaVA format)
+
+Use `utils_cosmos/build_llava_dataset.py` to convert a folder of MP4s + matching
+JSON annotations into a Cosmos full-FT ready LLaVA JSON dataset.
+
+1) Ensure matching basenames
+
+- Every `*.json` in your JSON folder must have a matching `*.mp4` in your video folder.
+  Example: `clip_001.json` + `clip_001.mp4`.
+
+2) Use existing dataset folders (already present)
+
+If you already have the standard folders:
+
+- MP4s: `/opt/dataset/train_dataset_17k`
+- JSON: `/opt/dataset/train_dataset_17k_json`
+
+You can run the script as-is (no edits needed).
+
+3) Update paths in the script (if different)
+
+Edit the top of `utils_cosmos/build_llava_dataset.py` to point at your local folders:
+
+- `prompt_path`: prompt used for the LLaVA "human" message (default: `FT_Cosmos/prompts/prompt_json.txt`)
+- `ann_dir`: your JSON folder
+- `media_dir`: your MP4 folder
+- `out_dir`: output folder for the LLaVA dataset
+
+4) Run the converter
+
+```bash
+python3 utils_cosmos/build_llava_dataset.py
+```
+
+5) Output
+
+The script writes `llava_train.json` under `out_dir` and reports any missing videos
+or invalid JSON. This file is ready to use as the Cosmos full-FT dataset in
+`cosmos-reason2/examples/cosmos_rl/scripts/llava_sft.py` configs.
+
 ### Full fine-tuning Cosmos (Cosmos-Reason2 repo)
 
 1) Clone the upstream repo
