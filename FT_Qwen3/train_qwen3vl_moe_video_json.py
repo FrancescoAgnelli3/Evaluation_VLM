@@ -422,7 +422,7 @@ def main(argv: Optional[List[str]] = None):
     import torch.distributed as dist
     ap = argparse.ArgumentParser()
 
-    ap.add_argument("--model_id", type=str, default="/opt/models/Qwen/Qwen3.5-397B-A17B")
+    ap.add_argument("--model_id", type=str, default="/opt/models/Qwen/Qwen3.5-397B-A17B-FP8")
     ap.add_argument("--video_dir", type=str, default=VIDEO_DIR)
     ap.add_argument("--json_dir", type=str, default=JSON_DIR)
     ap.add_argument("--prompt_path", type=str, default=str(PROMPT_DIR))

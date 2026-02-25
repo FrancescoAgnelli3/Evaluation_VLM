@@ -11,17 +11,20 @@ fi
 
 echo "Using ${NUM_GPUS} GPUs"
 
-# Safer defaults for multi-GPU rendezvous
+# Safer defaults
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
 export TORCH_NCCL_ASYNC_ERROR_HANDLING="${TORCH_NCCL_ASYNC_ERROR_HANDLING:-1}"
 
+# Optional: allocator fragmentation mitigation (helps with large models)
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+
+# torchrun rendezvous defaults (single node)
+export MASTER_ADDR="${MASTER_ADDR:-127.0.0.1}"
+export MASTER_PORT="${MASTER_PORT:-29500}"
+
 if [[ "${NUM_GPUS}" -eq 1 ]]; then
-  # Avoid torch.distributed rendezvous for single-GPU runs (can segfault in some envs).
   python train_cosmosvl_video_json.py "$@"
 else
-  # Internal multiprocessing launcher avoids torchrun/elastic rendezvous.
-  export INTERNAL_SPAWN=1
-  export MASTER_ADDR="${MASTER_ADDR:-127.0.0.1}"
-  export MASTER_PORT="${MASTER_PORT:-29500}"
-  python train_cosmosvl_video_json.py "$@"
+  torchrun --standalone --nproc_per_node="${NUM_GPUS}" \
+    train_cosmosvl_video_json.py "$@"
 fi

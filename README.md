@@ -38,6 +38,37 @@ python3 -m pip install -r requirements_cosmos.txt
 python3 -m pip install -r requirements_eval.txt
 ```
 
+### uv venv setup (recommended)
+
+Use separate local venvs per folder so dependencies don’t collide. Example with `uv`:
+
+Qwen3-VL fine-tuning:
+
+```bash
+cd Evaluation_VLM/FT_Qwen3
+uv venv .venv
+source .venv/bin/activate
+uv pip install -r ../requirements_qwen.txt
+```
+
+Cosmos-Reason2 fine-tuning:
+
+```bash
+cd Evaluation_VLM/FT_Cosmos
+uv venv .venv
+source .venv/bin/activate
+uv pip install -r ../requirements_cosmos.txt
+```
+
+Evaluation (uses Cosmos env, or create its own):
+
+```bash
+cd Evaluation_VLM/Evaluation
+uv venv .venv
+source .venv/bin/activate
+uv pip install -r ../requirements_eval.txt
+```
+
 ## Fine-tuning Qwen3-VL
 
 Scripts live in `FT_Qwen3/`. The training script expects a video directory and
@@ -78,6 +109,18 @@ Or use the helper script (edits in-file):
 
 ```bash
 bash FT_Qwen3/run_train_and_merge_all.sh
+```
+
+For MoE LoRA training with multi-GPU torchrun defaults, use `FT_Qwen3/run.sh`:
+
+```bash
+NUM_GPUS=4 bash FT_Qwen3/run.sh \
+  --model_id Qwen/Qwen3.5-397B-A17B-FP8 \
+  --video_dir /opt/dataset/train_dataset_17k \
+  --json_dir /opt/dataset/train_dataset_17k_json \
+  --tune both \
+  --output_dir /opt/models/Qwen3-MoE-FT/adapter \
+  --use_qlora
 ```
 
 ## Fine-tuning Cosmos-Reason2
