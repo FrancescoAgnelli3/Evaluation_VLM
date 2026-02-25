@@ -1,0 +1,35 @@
+# Custom SFT config for 8 GPUs
+#:schema ../../../configs/schemas/cosmos_rl_config.json
+
+[custom.dataset]
+annotation_path = "/opt/dataset/train_dataset_17k_json/llava_format/llava_train.json"
+media_path = "/opt/dataset/train_dataset_17k"
+system_prompt = ""
+
+[train]
+output_dir = "/opt/models/Cosmos-Reason2-FT/full_FT"
+compile = false
+train_batch_per_replica = 8
+epoch = 5
+
+[policy]
+model_name_or_path = "nvidia/Cosmos-Reason2-8B"
+model_max_length = 4096
+
+[logging]
+logger = ['console']
+project_name = "cosmos-reason2"
+experiment_name = "my_sft_8gpu"
+
+[train.train_policy]
+type = "sft"
+mini_batch = 2
+
+[train.ckpt]
+enable_checkpoint = true
+
+[policy.parallelism]
+tp_size = 1
+cp_size = 1
+dp_shard_size = 8
+pp_size = 1

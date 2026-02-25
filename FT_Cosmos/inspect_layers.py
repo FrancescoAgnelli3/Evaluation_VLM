@@ -7,17 +7,17 @@ from transformers import Qwen3VLForConditionalGeneration
 
 import os
 
-# Ensure HF/torch caches are redirected before anything that may touch HF.
-os.environ.setdefault("HF_HOME", "/mnt/ssd1/hf")
-os.environ.setdefault("HF_HUB_CACHE", "/mnt/ssd1/hf/hub")
-os.environ.setdefault("TRANSFORMERS_CACHE", "/mnt/ssd1/hf/transformers")
-os.environ.setdefault("HF_DATASETS_CACHE", "/mnt/ssd1/hf/datasets")
-os.environ.setdefault("TORCH_HOME", "/mnt/ssd1/torch")
+# # Ensure HF/torch caches are redirected before anything that may touch HF.
+# os.environ.setdefault("HF_HOME", "/mnt/ssd1/hf")
+# os.environ.setdefault("HF_HUB_CACHE", "/mnt/ssd1/hf/hub")
+# os.environ.setdefault("TRANSFORMERS_CACHE", "/mnt/ssd1/hf/transformers")
+# os.environ.setdefault("HF_DATASETS_CACHE", "/mnt/ssd1/hf/datasets")
+# os.environ.setdefault("TORCH_HOME", "/mnt/ssd1/torch")
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model_id", default="Qwen/Qwen3-VL-32B-Instruct")
-    ap.add_argument("--attn_impl", default="flash_attention_2", choices=["eager", "sdpa", "flash_attention_2"])
+    ap.add_argument("--attn_impl", default="eager", choices=["eager", "sdpa", "flash_attention_2"])
     args = ap.parse_args()
 
     model = Qwen3VLForConditionalGeneration.from_pretrained(

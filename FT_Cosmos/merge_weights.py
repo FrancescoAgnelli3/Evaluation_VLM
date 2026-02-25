@@ -21,8 +21,8 @@ import os
 # os.environ.setdefault("TORCH_HOME", "/mnt/ssd1/torch")
 
 BASE_MODEL_ID = "nvidia/Cosmos-Reason2-8B"
-ADAPTER_DIR = "/opt/models/Cosmos-Reason2-FT/adapter"
-OUTPUT_DIR = "/opt/models/Cosmos-Reason2-FT/merged"
+ADAPTER_DIR = "/opt/models/Cosmos-Reason2-FT/8B/LoRA/dataset_17k/adapter"
+OUTPUT_DIR = "/opt/models/Cosmos-Reason2-FT/8B/LoRA/dataset_17k/merged"
 
 import argparse
 import torch

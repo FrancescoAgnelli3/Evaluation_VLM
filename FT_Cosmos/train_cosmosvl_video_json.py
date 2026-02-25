@@ -41,10 +41,10 @@ from qwen_vl_utils import process_vision_info
 
 BASE_DIR = Path(__file__).resolve().parent
 
-VIDEO_DIR = "/opt/dataset/train_dataset"
-JSON_DIR = "/opt/dataset/train_dataset_json"
+VIDEO_DIR = "/opt/dataset/train_dataset_17k"
+JSON_DIR = "/opt/dataset/train_dataset_17k_json"
 PROMPT_DIR = BASE_DIR / "prompts/prompt_json.txt"
-OUTPUT_DIR = "/opt/models/Cosmos-Reason2-FT/adapter/"
+OUTPUT_DIR = "/opt/models/Cosmos-Reason2-FT/2B/LoRA/dataset_17k/adapter/"
 
 # Compat shim: some torch builds expose torch.compiler without is_compiling
 if not hasattr(torch, "compiler"):
@@ -93,6 +93,12 @@ def _collect_examples(video_dir: str, json_dir: str) -> List[Dict[str, str]]:
                         )
                     video = video[0]
                 label = obj["label"]
+                if isinstance(label, str):
+                    stripped = label.strip()
+                    if not (stripped.startswith("{") or stripped.startswith("[")):
+                        # If label is a file path, only keep .json entries.
+                        if Path(stripped).suffix.lower() != ".json":
+                            continue
                 ex.append(
                     {
                         "video": str((vdir / video).resolve()) if not os.path.isabs(video) else video,
@@ -362,7 +368,7 @@ def _print_trainable(model: torch.nn.Module) -> None:
 def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
 
-    ap.add_argument("--model_id", type=str, default="nvidia/Cosmos-Reason2-8B")
+    ap.add_argument("--model_id", type=str, default="nvidia/Cosmos-Reason2-2B")
 
     ap.add_argument("--video_dir", type=str, default=VIDEO_DIR)
     ap.add_argument("--json_dir", type=str, default=JSON_DIR)
