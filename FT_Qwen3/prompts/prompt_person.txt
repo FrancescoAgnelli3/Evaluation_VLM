@@ -1,0 +1,134 @@
+You are analyzing a sequence of frames extracted in temporal order from an urban public-space video.
+Your task is to produce a structured safety-relevant descriptive summary in JSON format, limited to what is directly observable in the frames.
+You must follow two independent layers:
+(1) epistemic rules (what is visible vs what is uncertain)
+(2) the output schema (what fields must exist)
+Output ONLY valid JSON.
+Do NOT include explanations, markdown, or extra text.
+────────────────────────────────────────────
+EPISTEMIC RULES
+────────────────────────────────────────────
+Visibility vs uncertainty: Use "visible": false only if the element is absent. If "visible": true, you MUST provide a "value" and a "confidence" [0,1]. Use "value": "unknown" for ambiguous elements.
+Minimality: Report only what is necessary to describe the scene and clearly observable safety-relevant interactions. Avoid speculative interpretation.
+Crowds: If individuals are too numerous to count, provide an estimate for "count" and lower the confidence.
+Specificity: Do not label an object as a "weapon" unless a specific harmful instrument (knife, firearm, blunt object) is clearly identifiable; otherwise, use "unknown_object" with descriptive text.
+No intent inference: Do not infer motives, relationships, intent, prior history, or future behavior not shown in the frames.
+No individual targeting: Do not produce stable identifiers for persons, do not attempt re-identification, and do not track the same person across frames beyond what is strictly needed for a local description in the current clip.
+Action restriction: Do not recommend enforcement actions or interventions. This output is for descriptive reporting only and requires human review for any downstream decision.
+────────────────────────────────────────────
+OUTPUT SCHEMA
+────────────────────────────────────────────
+{
+    "scene_context": {
+        "location_type": {
+            "visible": "<boolean>",
+            "value": "street | square | park | indoor_public | transit_hub | unknown",
+            "confidence": "<number>"
+            },
+        "lighting": {
+            "visible": "<boolean>",
+            "value": "daylight | low_light | night | unknown",
+            "confidence": "<number>"
+            },
+        "weather_visibility": {
+            "visible": "<boolean>",
+            "value": "clear | rain | snow | fog | unknown",
+            "confidence": "<number>"
+            },
+        "camera_view": {
+            "visible": "<boolean>",
+            "value": "fixed | panning | zooming | unknown",
+            "confidence": "<number>"
+            }
+        },
+    "crowd_and_flow": {
+        "gathering_present": {
+            "visible": "<boolean>",
+            "value": "<boolean>",
+            "confidence": "<number>"
+            },
+        "estimated_count": {
+            "visible": true,
+            "value": "<integer or unknown>",
+            "confidence": "<number>"
+            },
+        "movement_pattern": {
+            "visible": true,
+            "value": "mostly_static | walking_flow | running | dispersing | converging | unknown",
+            "confidence": "<number>"
+            },
+        "density_level": {
+            "visible": true,
+            "value": "low | medium | high | unknown",
+            "confidence": "<number>"
+            }
+        },
+    "observable_interactions": {
+        "physical_contact_present": {
+            "visible": "<boolean>",
+            "value": "<boolean>",
+            "confidence": "<number>"
+            },
+        "contact_type_if_any": {
+            "visible": "<boolean>",
+            "value": "none | accidental_brush | pushing | grabbing | striking | restraining | unknown",
+            "confidence": "<number>"
+            },
+        "verbal_exchange_apparent": {
+            "visible": "<boolean>",
+            "value": "<boolean>",
+            "confidence": "<number>"
+            },
+        "high_amplitude_gestures_visible": {
+                "visible": "<boolean>",
+                "value": "<boolean>",
+                "confidence": "<number>"
+            },
+        },
+    "objects_of_interest": {
+        "harm_instrument_clearly_identifiable": {
+            "visible": "<boolean>",
+            "value": "<boolean>",
+            "confidence": "<number>"
+            },
+        "identified_harm_instruments": {
+            "visible": "<boolean>",
+            "value": "<array of strings>",
+            "confidence": "<number>"
+            },
+        "unknown_objects": {
+            "visible": "<boolean>",
+            "value": [
+                {
+                "description": "<string: observable attributes only>",
+                "confidence": "<number>"
+                }
+                ],
+                "confidence": "<number>"
+                }
+            },
+    "events": [
+        {
+        "event_type": "unspecified_interaction | congestion | pushing_episode | fall | property_damage_visible | medical_distress_visible | unknown",
+        "approx_involved_persons_count": "<integer or unknown>",
+        "time_span_in_frames": {
+            "start_frame_index": "<integer>",
+            "end_frame_index": "<integer>"
+            },
+        "confidence": "<number>",
+        "description": "<string: observable facts only>"
+        }
+        ],
+    "uncertainty_summary": {
+        "key_ambiguities": {
+            "visible": true,
+            "value": "<array of strings>",
+            "confidence": "<number>"
+            },
+    "data_quality_issues": {
+        "visible": true,
+        "value": "<array of strings: e.g., occlusion, motion_blur, low_light>",
+        "confidence": "<number>"
+        }
+    }
+}
