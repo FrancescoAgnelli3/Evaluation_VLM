@@ -229,6 +229,38 @@ python3 Evaluation/answer_questions.py \
   --model all
 ```
 
+### Add a new model choice (new repo/path)
+
+To add a selectable model key (for `--model`), update `Evaluation/vllm_utils.py`:
+
+1) Add a repo/path variable (with env override)
+
+Add a new `*_REPO` constant near the top, for example:
+`MY_MODEL_REPO = os.environ.get("MY_MODEL_REPO", "/opt/models/MyModel")`
+
+2) Register the new model key
+
+Append your key to `MODEL_CHOICES`, e.g. `"my-model"`.
+
+3) Map key -> served model name
+
+Add a case in `_served_name_for()` so vLLM knows the served name.
+
+4) Map key -> repo/path
+
+Add a case in `_resolve_model_repo()` to return your `MY_MODEL_REPO`.
+
+Then run inference with:
+
+```bash
+python3 Evaluation/answer_questions.py \
+  --output-dir Evaluation/results \
+  --model my-model
+```
+
+Tip: You can avoid code edits by reusing an existing key and overriding its repo via env var,
+e.g. `COSMOS_REASON2_FULLFT_8B_17K_REPO=/path/to/new/model`.
+
 
 ## Evaluation
 
