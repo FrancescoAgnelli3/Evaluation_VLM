@@ -46,13 +46,13 @@ login(token=os.environ["HF_TOKEN"])
 
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_MEDIA_DIR = "/opt/dataset/test_dataset"
-DEFAULT_OUTPUT_DIR = BASE_DIR / "results"
+DEFAULT_OUTPUT_DIR = BASE_DIR / "results_road"
 
 # ----------------------------
 # Prompt A: Perception-only JSON
 # ----------------------------
 
-PROMPT_PERCEPTION_JSON = (BASE_DIR / "prompts" / "perception_prompt.txt").read_text(
+PROMPT_PERCEPTION_JSON = (BASE_DIR / "prompts" / "prompt_road.txt").read_text(
     encoding="utf-8"
 ).strip()
 

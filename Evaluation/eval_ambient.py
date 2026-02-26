@@ -912,7 +912,7 @@ def weighted_mean(values: pd.Series, weights: pd.Series) -> float:
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
     ap.add_argument("--results-gold", type=Path, default=GT_DIR)
-    ap.add_argument("--results", type=Path, default=BASE_DIR / "results")
+    ap.add_argument("--results", type=Path, default=BASE_DIR / "results-cosmos")
     ap.add_argument("--out", type=Path, default=BASE_DIR / "eval_out")
     ap.add_argument("--limit-videos", type=int, default=None)
     ap.add_argument("--model", action="append", default=None, help="Evaluate only specified model name(s). Can be repeated.")

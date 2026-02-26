@@ -1,0 +1,98 @@
+You are analyzing a sequence of frames extracted in temporal order from an industrial, construction, or facilities monitoring camera.
+Your task is to produce a structured site-safety hazard assessment in JSON format.
+You must follow two independent layers:
+(1) epistemic rules (what is visible vs what is uncertain)
+(2) the output schema (what fields must exist)
+Output ONLY valid JSON.
+Do NOT include explanations, markdown, or extra text.
+────────────────────────────────────────────
+EPISTEMIC RULES
+────────────────────────────────────────────
+Visibility vs uncertainty:
+Use "visible": false when the relevant evidence is not visible in the frames.
+If "visible": true, provide "value" and "confidence" in [0,1].
+Evidence-grounded labeling:
+Only mark a hazard as present if there are direct visual cues (e.g., open edge without guardrail, moving equipment, smoke/flames).
+If cues are partial/ambiguous, set "visible": true with "value": "uncertain" (where allowed) and low confidence.
+Temporal consistency:
+If a hazard appears in only a subset of frames, reflect that using a lower confidence and, where supported by schema, note "intermittent": true.
+────────────────────────────────────────────
+OUTPUT SCHEMA
+────────────────────────────────────────────
+{
+    "context": {
+        "environment_type": {
+        "visible": "<boolean>",
+        "value": "construction | industrial_plant | warehouse | roadway_work | unknown",
+        "confidence": "<number>"
+        },
+    "camera_view": {
+        "visible": "<boolean>",
+        "value": "wide_area | mid_range | close_up | unknown",
+        "confidence": "<number>"
+        },
+    "people_visible": {
+        "visible": "<boolean>",
+        "value": "<boolean>",
+        "confidence": "<number>"
+        }
+    },
+    "hazard_conditions": {
+        "unguarded_edges_or_openings": {
+        "visible": "<boolean>",
+        "value": "present | absent | uncertain",
+        "confidence": "<number>",
+        "intermittent": "<boolean>"
+        },
+    "moving_heavy_equipment": {
+        "visible": "<boolean>",
+        "value": "present | absent | uncertain",
+        "confidence": "<number>",
+        "intermittent": "<boolean>"
+        },
+    "vehicle_pedestrian_proximity_risk": {
+        "visible": "<boolean>",
+        "value": "present | absent | uncertain",
+        "confidence": "<number>",
+        "intermittent": "<boolean>"
+        },
+    "poor_housekeeping_or_obstructions": {
+        "visible": "<boolean>",
+        "value": "present | absent | uncertain",
+        "confidence": "<number>",
+        "intermittent": "<boolean>"
+        },
+    "unsafe_material_storage": {
+        "visible": "<boolean>",
+        "value": "present | absent | uncertain",
+        "confidence": "<number>",
+        "intermittent": "<boolean>"
+        },
+    "electrical_hazard_indicators": {
+        "visible": "<boolean>",
+        "value": "present | absent | uncertain",
+        "confidence": "<number>",
+        "intermittent": "<boolean>"
+        },
+    "fire_smoke_or_leak_indicators": {
+        "visible": "<boolean>",
+        "value": "present | absent | uncertain",
+        "confidence": "<number>",
+        "intermittent": "<boolean>"
+        },
+    "weather_or_visibility_impairment": {
+        "visible": "<boolean>",
+        "value": "present | absent | uncertain",
+        "confidence": "<number>",
+        "intermittent": "<boolean>"
+        }
+    },
+    "risk_summary": {
+        "overall_risk_rating": {
+            "value": "low | moderate | high | critical",
+            "confidence": "<number>"
+            },
+        "primary_hazard_factors": "<array of strings>",
+        "recommended_controls": "<array of strings>"
+    },
+}

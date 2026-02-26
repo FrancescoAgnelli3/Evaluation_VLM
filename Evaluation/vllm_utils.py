@@ -589,7 +589,7 @@ class VLLMClient:
         """
         Force JSON mode; extract first JSON object if needed; retry once with a stricter system message.
         """
-        result = self._request(video_path, prompt, force_json_mode=True)
+        result = self._request(video_path, prompt, force_json_mode=False)
         if result is None:
             return None
 
@@ -603,7 +603,7 @@ class VLLMClient:
         retry = self._request(
             video_path,
             prompt,
-            force_json_mode=True,
+            force_json_mode=False,
             extra_system="Return only a single valid JSON object. No markdown, no explanations, no surrounding text.",
         )
         if retry is None:
