@@ -221,13 +221,23 @@ python3 FT_Cosmos/merge_weights.py \
 `Evaluation/answer_questions.py` auto-starts vLLM via `Evaluation/vllm_utils.py`.
 Model keys are mapped to HF repos or local paths in that file.
 
-Example:
+Example (road task):
 
 ```bash
 python3 Evaluation/answer_questions.py \
-  --output-dir Evaluation/results \
+  --task road \
   --model all
 ```
+
+Example (person task):
+
+```bash
+python3 Evaluation/answer_questions.py \
+  --task person \
+  --model all
+```
+
+By default, outputs go to `Evaluation/results_{task}` unless you override with `--output-dir`.
 
 ### Add a new model choice (new repo/path)
 
@@ -254,7 +264,7 @@ Then run inference with:
 
 ```bash
 python3 Evaluation/answer_questions.py \
-  --output-dir Evaluation/results \
+  --task road \
   --model my-model
 ```
 
@@ -264,17 +274,31 @@ e.g. `COSMOS_REASON2_FULLFT_8B_17K_REPO=/path/to/new/model`.
 
 ## Evaluation
 
-1) Score student outputs
+1) Score student outputs (road task)
 
 ```bash
 python3 Evaluation/eval.py \
-  --out Evaluation/eval_out
+  --task road
 ```
 
 Outputs:
-- `Evaluation/eval_out/per_video_scores.csv`
-- `Evaluation/eval_out/model_summary.csv`
-- `Evaluation/eval_out/details.json`
+- `Evaluation/eval_out_road/per_video_scores.csv`
+- `Evaluation/eval_out_road/model_summary.csv`
+- `Evaluation/eval_out_road/details.json`
+
+Other tasks:
+
+```bash
+python3 Evaluation/eval.py --task person
+python3 Evaluation/eval.py --task ambient
+python3 Evaluation/eval.py --task industry
+```
+
+Defaults:
+- road: `results_road` -> `eval_out_road`
+- person: `results_person` -> `eval_out_person`
+- ambient: `results_ambient` -> `eval_out_urban`
+- industry: `results_industry` -> `eval_out_industry`
 
 ## Notes
 

@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
@@ -45,7 +44,21 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 import numpy as np
 import pandas as pd
 
-BASE_DIR = Path(__file__).resolve().parent
+from utils.eval_common import (
+    _set_f1,
+    compute_teacher_run_consensus_weight,
+    discover_student_files,
+    discover_teacher_standards,
+    get_path,
+    is_bool_or_unknown,
+    is_confidence,
+    is_int_or_unknown,
+    read_json,
+    safe_float,
+    weighted_mean,
+)
+
+BASE_DIR = Path(__file__).resolve().parents[1]
 GT_DIR = "/opt/dataset/test_dataset_json"
 
 
@@ -135,66 +148,6 @@ ENVIRONMENT_SLOTS: List[Tuple[Any, ...]] = [
     ("environmental_conditions", "wind_conditions", "visible"),
     ("environmental_conditions", "wind_conditions", "value"),
 ]
-
-
-# ----------------------------
-# Basic helpers
-# ----------------------------
-
-def read_json(path: Path) -> Optional[Dict[str, Any]]:
-    try:
-        obj = json.loads(path.read_text(encoding="utf-8"))
-        return obj if isinstance(obj, dict) else None
-    except Exception:
-        return None
-
-
-def get_path(obj: Any, path: Sequence[Any]) -> Any:
-    cur = obj
-    for p in path:
-        if p == "*":
-            raise ValueError("Wildcard cannot be resolved with get_path()")
-        if not isinstance(cur, dict) or p not in cur:
-            return None
-        cur = cur[p]
-    return cur
-
-
-def safe_float(x: Any) -> Optional[float]:
-    try:
-        return float(x)
-    except Exception:
-        return None
-
-
-def is_confidence(x: Any) -> bool:
-    v = safe_float(x)
-    return v is not None and 0.0 <= v <= 1.0
-
-
-def is_int_or_unknown(x: Any) -> bool:
-    if x == "unknown":
-        return True
-    return isinstance(x, int) and not isinstance(x, bool)
-
-
-def is_bool_or_unknown(x: Any) -> bool:
-    if x == "unknown":
-        return True
-    return isinstance(x, bool)
-
-
-def _set_f1(pred: Iterable[Any], ref: Iterable[Any]) -> float:
-    ps = set(str(x) for x in (pred or []))
-    rs = set(str(x) for x in (ref or []))
-    if not ps and not rs:
-        return 1.0
-    tp = len(ps & rs)
-    fp = len(ps - rs)
-    fn = len(rs - ps)
-    prec = tp / (tp + fp) if (tp + fp) else 1.0
-    rec = tp / (tp + fn) if (tp + fn) else 1.0
-    return (2 * prec * rec / (prec + rec)) if (prec + rec) else 0.0
 
 
 def _pair_key(p: Dict[str, Any]) -> Optional[Tuple[str, str]]:
@@ -794,61 +747,6 @@ def validate_struct(obj: Optional[Dict[str, Any]]) -> ValidationReport:
 
 
 # ----------------------------
-# Teacher discovery / student discovery
-# ----------------------------
-
-def discover_teacher_standards(results_gold: Path) -> List[Tuple[str, Path]]:
-    suffixes = [
-        ".json",
-    ]
-    out: List[Tuple[str, Path]] = []
-    for p in sorted(results_gold.iterdir()):
-        if not p.is_file():
-            continue
-        name = p.name
-        matched_suffix = next((s for s in suffixes if name.endswith(s)), None)
-        if matched_suffix is None:
-            continue
-        video_id = name[: -len(matched_suffix)]
-        out.append((video_id, p))
-    return out
-
-
-def discover_teacher_runs(results_gold: Path, video_id: str) -> List[Path]:
-    pats = [
-        f"{video_id}.teacher.run_*.json",
-        f"{video_id}.teacher.perception_raw.run_*.json",
-    ]
-    out: List[Path] = []
-    for pat in pats:
-        out.extend(results_gold.glob(pat))
-    return sorted(set(out))
-
-
-def discover_student_files(results: Path, video_id: str) -> List[Tuple[str, Path]]:
-    suffixes = ["_json_answer.json", "_integrated.json", ".json"]
-    files: List[Tuple[str, Path]] = []
-    vid_re = re.compile(rf"(?:^|_){re.escape(video_id)}_(.+)$")
-
-    for p in results.iterdir():
-        if not p.is_file():
-            continue
-        name = p.name
-        matched_suffix = next((s for s in suffixes if name.endswith(s)), None)
-        if matched_suffix is None:
-            continue
-        stem = name[: -len(matched_suffix)] if matched_suffix != ".json" else name[: -len(".json")]
-        # Match "<video_id>_<model>" anywhere with "_" boundary before video_id.
-        # This covers "question_<video_id>_<model>" and optional numeric prefixes.
-        m = vid_re.search(stem)
-        if m:
-            model = m.group(1) or "unknown"
-            files.append((model, p))
-
-    return sorted(files, key=lambda x: x[0])
-
-
-# ----------------------------
 # Teacher-run consensus weighting
 # ----------------------------
 
@@ -862,67 +760,33 @@ def _sym_risk_obs_acc(a: Dict[str, Any], b: Dict[str, Any]) -> float:
     return 0.5 * (score_risk_assessment(a, b).macro_acc + score_risk_assessment(b, a).macro_acc)
 
 
-def compute_teacher_run_consensus_weight(results_gold: Path, video_id: str) -> float:
-    run_paths = discover_teacher_runs(results_gold, video_id)
-    runs: List[Dict[str, Any]] = []
-    for p in run_paths:
-        obj = read_json(p)
-        if obj is None:
-            continue
-        vrep = validate_struct(obj)
-        if not vrep.parse_ok:
-            continue
-        runs.append(obj)
-
-    if len(runs) < 2:
-        return 1.0
-
-    pair_scores: List[float] = []
-    for i in range(len(runs)):
-        for j in range(i + 1, len(runs)):
-            gpair = _sym_global_slot_acc(runs[i], runs[j])
-            rpair = _sym_risk_obs_acc(runs[i], runs[j])
-            pair_scores.append(0.5 * gpair + 0.5 * rpair)
-
-    if not pair_scores:
-        return 1.0
-
-    w = float(np.mean(pair_scores))
-    return min(1.0, max(0.0, w))
-
-
-def weighted_mean(values: pd.Series, weights: pd.Series) -> float:
-    v = pd.to_numeric(values, errors="coerce")
-    w = pd.to_numeric(weights, errors="coerce")
-    m = v.notna() & w.notna() & (w > 0)
-    if not m.any():
-        return float("nan")
-    vv = v[m].astype(float)
-    ww = w[m].astype(float)
-    denom = float(ww.sum())
-    if denom <= 0.0:
-        return float("nan")
-    return float((vv * ww).sum() / denom)
+def _consensus_pair_score(a: Dict[str, Any], b: Dict[str, Any]) -> float:
+    gpair = _sym_global_slot_acc(a, b)
+    rpair = _sym_risk_obs_acc(a, b)
+    return 0.5 * gpair + 0.5 * rpair
 
 
 # ----------------------------
 # CLI / main
 # ----------------------------
 
-def parse_args() -> argparse.Namespace:
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     ap.add_argument("--results-gold", type=Path, default=GT_DIR)
     ap.add_argument("--results", type=Path, default=BASE_DIR / "results_road")
     ap.add_argument("--out", type=Path, default=BASE_DIR / "eval_out_road")
     ap.add_argument("--limit-videos", type=int, default=None)
     ap.add_argument("--model", action="append", default=None, help="Evaluate only specified model name(s). Can be repeated.")
-    ap.add_argument("--include-teacher-runs", action="store_true", help="Compute per-video consensus weights from teacher runs and report weighted means.")
+    ap.add_argument(
+        "--include-teacher-runs",
+        action="store_true",
+        help="Compute per-video consensus weights from teacher runs and report weighted means.",
+    )
     ap.add_argument("--verbose", action=argparse.BooleanOptionalAction, default=True)
-    return ap.parse_args()
+    return ap
 
 
-def main() -> None:
-    args = parse_args()
+def run(args: argparse.Namespace) -> None:
     args.out.mkdir(parents=True, exist_ok=True)
     verbose = bool(args.verbose)
 
@@ -950,7 +814,12 @@ def main() -> None:
 
         consensus_weight = 1.0
         if args.include_teacher_runs:
-            consensus_weight = compute_teacher_run_consensus_weight(args.results_gold, video_id)
+            consensus_weight = compute_teacher_run_consensus_weight(
+                args.results_gold,
+                video_id,
+                validate_struct,
+                _consensus_pair_score,
+            )
 
         student_files = discover_student_files(args.results, video_id)
         if args.model:
@@ -1094,6 +963,11 @@ def main() -> None:
     print(f"Wrote: {df_out}")
     print(f"Wrote: {df_agg_out}")
     print(f"Wrote: {args.out / 'details.json'}")
+
+
+def main() -> None:
+    args = build_parser().parse_args()
+    run(args)
 
 
 if __name__ == "__main__":

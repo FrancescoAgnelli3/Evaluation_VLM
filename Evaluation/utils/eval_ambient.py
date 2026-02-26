@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -29,7 +28,19 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
-BASE_DIR = Path(__file__).resolve().parent
+from utils.eval_common import (
+    discover_student_files,
+    discover_teacher_standards,
+    get_path,
+    is_bool_or_unknown,
+    is_confidence,
+    is_int_list,
+    is_str_list,
+    read_json,
+    safe_float,
+)
+
+BASE_DIR = Path(__file__).resolve().parents[1]
 GT_DIR = "/opt/dataset/test_dataset_json"
 
 
@@ -120,55 +131,6 @@ ACTIVITY_SLOTS: List[Tuple[Any, ...]] = (
 # Limitations are free-form: not scored by default (too easy to “game”, too hard to normalize).
 # If you want presence scoring, add:
 # LIMITATIONS_SLOTS = [("limitations", "visibility_constraints"), ("limitations", "notes")]
-
-
-# ----------------------------
-# Basic helpers
-# ----------------------------
-
-def read_json(path: Path) -> Optional[Dict[str, Any]]:
-    try:
-        obj = json.loads(path.read_text(encoding="utf-8"))
-        return obj if isinstance(obj, dict) else None
-    except Exception:
-        return None
-
-
-def get_path(obj: Any, path: Sequence[Any]) -> Any:
-    cur = obj
-    for p in path:
-        if p == "*":
-            raise ValueError("Wildcard cannot be resolved with get_path()")
-        if not isinstance(cur, dict) or p not in cur:
-            return None
-        cur = cur[p]
-    return cur
-
-
-def safe_float(x: Any) -> Optional[float]:
-    try:
-        return float(x)
-    except Exception:
-        return None
-
-
-def is_confidence(x: Any) -> bool:
-    v = safe_float(x)
-    return v is not None and 0.0 <= v <= 1.0
-
-
-def is_bool_or_unknown(x: Any) -> bool:
-    if x == "unknown":
-        return True
-    return isinstance(x, bool)
-
-
-def is_str_list(x: Any) -> bool:
-    return isinstance(x, list) and all(isinstance(t, str) for t in x)
-
-
-def is_int_list(x: Any) -> bool:
-    return isinstance(x, list) and all(isinstance(t, int) and not isinstance(t, bool) for t in x)
 
 
 def _set_f1(pred: Iterable[Any], ref: Iterable[Any]) -> float:
@@ -460,49 +422,10 @@ def validate_struct(obj: Optional[Dict[str, Any]]) -> ValidationReport:
 
 
 # ----------------------------
-# Teacher discovery / student discovery
-# ----------------------------
-
-def discover_teacher_standards(results_gold: Path) -> List[Tuple[str, Path]]:
-    # Standard: <video_id>.json
-    out: List[Tuple[str, Path]] = []
-    for p in sorted(results_gold.iterdir()):
-        if not p.is_file():
-            continue
-        if not p.name.endswith(".json"):
-            continue
-        video_id = p.name[:-len(".json")]
-        out.append((video_id, p))
-    return out
-
-
-def discover_student_files(results: Path, video_id: str) -> List[Tuple[str, Path]]:
-    # Keep compatible with your existing naming conventions.
-    suffixes = ["_json_answer.json", "_integrated.json", ".json"]
-    files: List[Tuple[str, Path]] = []
-    vid_re = re.compile(rf"(?:^|_){re.escape(video_id)}_(.+)$")
-
-    for p in results.iterdir():
-        if not p.is_file():
-            continue
-        name = p.name
-        matched_suffix = next((s for s in suffixes if name.endswith(s)), None)
-        if matched_suffix is None:
-            continue
-        stem = name[: -len(matched_suffix)] if matched_suffix != ".json" else name[: -len(".json")]
-        m = vid_re.search(stem)
-        if m:
-            model = m.group(1) or "unknown"
-            files.append((model, p))
-
-    return sorted(files, key=lambda x: x[0])
-
-
-# ----------------------------
 # CLI / main
 # ----------------------------
 
-def parse_args() -> argparse.Namespace:
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     ap.add_argument("--results-gold", type=Path, default=GT_DIR)
     ap.add_argument("--results", type=Path, default=BASE_DIR / "results_ambient")
@@ -510,11 +433,10 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--limit-videos", type=int, default=None)
     ap.add_argument("--model", action="append", default=None, help="Evaluate only specified model name(s). Can be repeated.")
     ap.add_argument("--verbose", action=argparse.BooleanOptionalAction, default=True)
-    return ap.parse_args()
+    return ap
 
 
-def main() -> None:
-    args = parse_args()
+def run(args: argparse.Namespace) -> None:
     args.out.mkdir(parents=True, exist_ok=True)
     verbose = bool(args.verbose)
 
@@ -642,6 +564,11 @@ def main() -> None:
     print(f"Wrote: {df_out}")
     print(f"Wrote: {df_agg_out}")
     print(f"Wrote: {args.out / 'details.json'}")
+
+
+def main() -> None:
+    args = build_parser().parse_args()
+    run(args)
 
 
 if __name__ == "__main__":
