@@ -1,8 +1,13 @@
-/Evaluation/results/*
-/Evaluation/results_old/*
+/Evaluation/results_person/*
+/Evaluation/results_road/*
+/Evaluation/results_ambient/*
+/Evaluation/results_industry/*
 /Evaluation/data
 /Evaluation/demos/*
-/Evaluation/eval_out/*
+/Evaluation/eval_out_road/*
+/Evaluation/eval_out_ambient/*
+/Evaluation/eval_out_person/*
+/Evaluation/eval_out_industry/*
 */pycache__/
 # Python
 __pycache__/

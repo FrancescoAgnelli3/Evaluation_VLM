@@ -1,33 +1,49 @@
 #!/usr/bin/env python3
 """
-Evaluator for the ROAD-SAFETY ASSESSMENT JSON schema.
+Evaluator for the URBAN PUBLIC-SPACE SAFETY-RELEVANT JSON schema.
 
-Changes vs previous rewrite
----------------------------
-1) "slot accuracy" is now a GLOBAL metric computed over *all scorable leaves* across:
-   - road_composition
-   - environmental_conditions
-   - traffic_status
-   - vehicle_events
-   - pedestrian_events
-   (Risk Assessment already has its own metrics and is kept separate.)
+Scoring philosophy (mirrors the previous road-safety evaluator style)
+--------------------------------------------------------------------
+1) "Slot accuracy" is a GLOBAL metric computed over *all scorable leaves* across:
+   - scene_context
+   - crowd_and_flow
+   - observable_interactions
+   - objects_of_interest
+   - uncertainty_summary
+   plus a dedicated section metric for events.
 
-2) Adds one specific metric per section, in the same spirit as Risk Assessment metrics:
-   - road_composition_slot_macro_acc
-   - environmental_conditions_slot_macro_acc
-   - traffic_status_macro_acc
-   - vehicle_events_macro_acc
-   - pedestrian_events_macro_acc
-   - global_slot_macro_acc  (the global metric requested)
+2) Per-section macro metrics are also reported:
+   - scene_context_slot_macro_acc
+   - crowd_and_flow_slot_macro_acc
+   - observable_interactions_slot_macro_acc
+   - objects_of_interest_slot_macro_acc
+   - uncertainty_summary_slot_macro_acc
+   - events_macro_acc
+   - global_slot_macro_acc  (true macro over all scored leaves across sections)
 
-3) Keeps validation (parse_ok / schema_ok / rule_ok) best-effort.
+3) Epistemic gating:
+   - score all ".visible"
+   - score ".value" only if teacher says the corresponding element is visible==true
+   - for list/dict "value" fields we score set-based or structured metrics (see below)
+
+Events scoring (bag-of-events)
+------------------------------
+- presence_f1 over event_type (set-based, counts ignored)
+- count_acc over event_type counts (exact)
+- persons_count_acc over event_type -> approx_involved_persons_count (exact per event instance aggregated by type)
+- span_acc over event_type -> (start,end) exact per event instance aggregated by type
+
+Text fields:
+- event.description is NOT scored (too brittle)
+- unknown_objects[].description IS scored as set-based matching (still brittle, but often short/controlled)
+- arrays of strings (identified_harm_instruments, key_ambiguities, data_quality_issues) scored as set-F1.
 
 Teacher-run consensus (optional)
 --------------------------------
 If --include-teacher-runs is enabled, computes per-video consensus weights from teacher runs only,
 and reports weighted means for:
   - weight_global_slot_macro_acc_mean
-  - weight_risk_obs_macro_acc_mean
+  - weight_events_macro_acc_mean
 
 Dependencies:
   pip install numpy pandas
@@ -40,7 +56,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -54,87 +70,83 @@ GT_DIR = "/opt/dataset/test_dataset_json"
 # ----------------------------
 
 ENUMS: Dict[Tuple[Any, ...], set] = {
-    # road_composition
-    ("road_composition", "lane_directions", "value"): {"one_way", "two_way", "unknown"},
-    ("road_composition", "road_type", "value"): {"urban", "suburban", "highway", "pedestrian_zone", "unknown"},
-    ("road_composition", "pedestrian_crossings", "type", "value"): {"zebra", "traffic_light_controlled", "other", "unknown"},
-    ("road_composition", "traffic_lights", "visible_state", "value"): {"red", "yellow", "green", "unknown"},
-    # environmental_conditions
-    ("environmental_conditions", "weather", "value"): {"clear", "rain", "snow", "fog", "storm", "unknown"},
-    ("environmental_conditions", "precipitation_intensity", "value"): {"none", "light", "moderate", "heavy", "unknown"},
-    ("environmental_conditions", "ambient_visibility", "value"): {"good", "reduced", "poor", "unknown"},
-    ("environmental_conditions", "road_surface_condition", "value"): {"dry", "wet", "icy", "snow_covered", "unknown"},
-    ("environmental_conditions", "lighting_conditions", "value"): {"daylight", "dusk_dawn", "night", "artificial_lighting", "unknown"},
-    ("environmental_conditions", "wind_conditions", "value"): {"calm", "windy", "strong_wind", "unknown"},
-    # traffic_status
-    ("traffic_status", "*", "status", "value"): {"free", "slow", "congested", "stopped"},
-    ("traffic_status", "*", "vehicle_density", "value"): {"low", "medium", "high"},
-    # vehicle_events
-    ("vehicle_events", "*", "event_type"): {"speeding", "red_light_violation", "illegal_lane_change", "wrong_direction", "illegal_stop", "other"},
-    ("vehicle_events", "*", "involved_vehicle_type"): {"car", "truck", "motorcycle", "bus", "unknown"},
-    ("vehicle_events", "*", "risk_level"): {"low", "medium", "high"},
-    # pedestrian_events
-    ("pedestrian_events", "*", "behavior"): {"crossing_legally", "jaywalking", "waiting", "standing_in_road", "other"},
-    ("pedestrian_events", "*", "location"): {"crosswalk", "sidewalk", "roadway", "median", "unknown"},
-    ("pedestrian_events", "*", "interaction_with_vehicles"): {"none", "near_miss", "conflict"},
-    ("pedestrian_events", "*", "risk_level"): {"low", "medium", "high"},
-    # Risk Assessment overall
-    ("Risk Assessment", "*", "overall_risk_assessment", "risk_level", "value"): {"low", "medium", "high"},
+    ("scene_context", "location_type", "value"): {"street", "square", "park", "indoor_public", "transit_hub", "unknown"},
+    ("scene_context", "lighting", "value"): {"daylight", "low_light", "night", "unknown"},
+    ("scene_context", "weather_visibility", "value"): {"clear", "rain", "snow", "fog", "unknown"},
+    ("scene_context", "camera_view", "value"): {"fixed", "panning", "zooming", "unknown"},
+    ("crowd_and_flow", "movement_pattern", "value"): {"mostly_static", "walking_flow", "running", "dispersing", "converging", "unknown"},
+    ("crowd_and_flow", "density_level", "value"): {"low", "medium", "high", "unknown"},
+    ("observable_interactions", "contact_type_if_any", "value"): {"none", "accidental_brush", "pushing", "grabbing", "striking", "restraining", "unknown"},
+    ("events", "*", "event_type"): {
+        "unspecified_interaction",
+        "congestion",
+        "pushing_episode",
+        "fall",
+        "property_damage_visible",
+        "medical_distress_visible",
+        "unknown",
+    },
 }
-
-RISK_OBS_VEH_IDS = [
-    "crossed_intersection",
-    "motorcycle_without_helmet_observed",
-    "lane_change_observed",
-    "wrong_direction_observed",
-    "blocking_stop_line_or_crosswalk_observed",
-    "stopped_in_travel_lane_observed",
-    "likely_high_speed_observed",
-]
-RISK_OBS_PAIRS = ["tailgating_observed"]
 
 
 # ----------------------------
 # Slot paths (per-section)
 # ----------------------------
 
-ROAD_COMPOSITION_SLOTS: List[Tuple[Any, ...]] = [
-    ("road_composition", "number_of_lanes", "visible"),
-    ("road_composition", "number_of_lanes", "value"),
-    ("road_composition", "lane_directions", "visible"),
-    ("road_composition", "lane_directions", "value"),
-    ("road_composition", "road_type", "visible"),
-    ("road_composition", "road_type", "value"),
-    ("road_composition", "pedestrian_crossings", "visible"),
-    ("road_composition", "pedestrian_crossings", "present", "value"),
-    ("road_composition", "pedestrian_crossings", "type", "value"),
-    ("road_composition", "traffic_lights", "visible"),
-    ("road_composition", "traffic_lights", "present", "value"),
-    ("road_composition", "traffic_lights", "visible_state", "value"),
-    ("road_composition", "horizontal_signage", "visible"),
-    ("road_composition", "horizontal_signage", "lane_markings", "value"),
-    ("road_composition", "horizontal_signage", "stop_lines", "value"),
-    ("road_composition", "horizontal_signage", "other_markings", "value"),
-    ("road_composition", "vertical_signage", "visible"),
-    ("road_composition", "vertical_signage", "speed_limit", "value"),
-    ("road_composition", "vertical_signage", "warning_signs", "value"),
-    ("road_composition", "vertical_signage", "prohibition_signs", "value"),
+SCENE_CONTEXT_SLOTS: List[Tuple[Any, ...]] = [
+    ("scene_context", "location_type", "visible"),
+    ("scene_context", "location_type", "value"),
+    ("scene_context", "lighting", "visible"),
+    ("scene_context", "lighting", "value"),
+    ("scene_context", "weather_visibility", "visible"),
+    ("scene_context", "weather_visibility", "value"),
+    ("scene_context", "camera_view", "visible"),
+    ("scene_context", "camera_view", "value"),
 ]
 
-ENVIRONMENT_SLOTS: List[Tuple[Any, ...]] = [
-    ("environmental_conditions", "weather", "visible"),
-    ("environmental_conditions", "weather", "value"),
-    ("environmental_conditions", "precipitation_intensity", "visible"),
-    ("environmental_conditions", "precipitation_intensity", "value"),
-    ("environmental_conditions", "ambient_visibility", "visible"),
-    ("environmental_conditions", "ambient_visibility", "value"),
-    ("environmental_conditions", "road_surface_condition", "visible"),
-    ("environmental_conditions", "road_surface_condition", "value"),
-    ("environmental_conditions", "lighting_conditions", "visible"),
-    ("environmental_conditions", "lighting_conditions", "value"),
-    ("environmental_conditions", "wind_conditions", "visible"),
-    ("environmental_conditions", "wind_conditions", "value"),
+CROWD_FLOW_SLOTS: List[Tuple[Any, ...]] = [
+    ("crowd_and_flow", "gathering_present", "visible"),
+    ("crowd_and_flow", "gathering_present", "value"),
+    ("crowd_and_flow", "estimated_count", "visible"),
+    ("crowd_and_flow", "estimated_count", "value"),
+    ("crowd_and_flow", "movement_pattern", "visible"),
+    ("crowd_and_flow", "movement_pattern", "value"),
+    ("crowd_and_flow", "density_level", "visible"),
+    ("crowd_and_flow", "density_level", "value"),
 ]
+
+INTERACTIONS_SLOTS: List[Tuple[Any, ...]] = [
+    ("observable_interactions", "physical_contact_present", "visible"),
+    ("observable_interactions", "physical_contact_present", "value"),
+    ("observable_interactions", "contact_type_if_any", "visible"),
+    ("observable_interactions", "contact_type_if_any", "value"),
+    ("observable_interactions", "verbal_exchange_apparent", "visible"),
+    ("observable_interactions", "verbal_exchange_apparent", "value"),
+    ("observable_interactions", "high_amplitude_gestures_visible", "visible"),
+    ("observable_interactions", "high_amplitude_gestures_visible", "value"),
+]
+
+# objects_of_interest are partly list/scalar hybrid; we score scalars as leaf slots,
+# and handle list/dict-valued "value" via special scorers.
+OBJECTS_SCALAR_SLOTS: List[Tuple[Any, ...]] = [
+    ("objects_of_interest", "harm_instrument_clearly_identifiable", "visible"),
+    ("objects_of_interest", "harm_instrument_clearly_identifiable", "value"),
+    ("objects_of_interest", "identified_harm_instruments", "visible"),
+    ("objects_of_interest", "unknown_objects", "visible"),
+]
+
+UNCERTAINTY_SCALAR_SLOTS: List[Tuple[Any, ...]] = [
+    ("uncertainty_summary", "key_ambiguities", "visible"),
+    ("uncertainty_summary", "data_quality_issues", "visible"),
+]
+
+# Dedicated list-valued paths (scored with set-F1 / structured scoring)
+LIST_VALUE_PATHS = {
+    "identified_harm_instruments": ("objects_of_interest", "identified_harm_instruments", "value"),
+    "unknown_objects_descriptions": ("objects_of_interest", "unknown_objects", "value"),  # list of dicts
+    "key_ambiguities": ("uncertainty_summary", "key_ambiguities", "value"),
+    "data_quality_issues": ("uncertainty_summary", "data_quality_issues", "value"),
+}
 
 
 # ----------------------------
@@ -197,25 +209,15 @@ def _set_f1(pred: Iterable[Any], ref: Iterable[Any]) -> float:
     return (2 * prec * rec / (prec + rec)) if (prec + rec) else 0.0
 
 
-def _pair_key(p: Dict[str, Any]) -> Optional[Tuple[str, str]]:
-    if not isinstance(p, dict):
-        return None
-    a = p.get("leader_id")
-    b = p.get("follower_id")
-    if not isinstance(a, str) or not isinstance(b, str):
-        return None
-    return (a, b)
-
-
 # ----------------------------
-# Teacher gating for slot scoring (road/env)
+# Teacher gating for leaf slot scoring
 # ----------------------------
 
 def should_score_slot(path: Tuple[Any, ...], teacher: Dict[str, Any]) -> bool:
     """
-    For road_composition and environmental_conditions slots:
-      - score all .visible
-      - score .value only if teacher says the corresponding element is visible/present
+    General rule:
+      - score all ...visible
+      - score ...value only if corresponding ...visible is True in teacher
     """
     if not path:
         return True
@@ -223,47 +225,10 @@ def should_score_slot(path: Tuple[Any, ...], teacher: Dict[str, Any]) -> bool:
     if path[-1] == "visible":
         return True
 
-    # road_composition.<field>.value gated by road_composition.<field>.visible
-    if len(path) == 3 and path[0] == "road_composition" and path[-1] == "value":
-        vis = get_path(teacher, (path[0], path[1], "visible"))
-        return vis is True
-
-    # environmental_conditions.<field>.value gated by environmental_conditions.<field>.visible
-    if len(path) == 3 and path[0] == "environmental_conditions" and path[-1] == "value":
-        vis = get_path(teacher, (path[0], path[1], "visible"))
-        return vis is True
-
-    # pedestrian_crossings.present/type gating
-    if path[:2] == ("road_composition", "pedestrian_crossings") and path[-1] == "value":
-        pc_vis = get_path(teacher, ("road_composition", "pedestrian_crossings", "visible"))
-        if pc_vis is not True:
-            return False
-        if path[2] == "present":
-            return True
-        if path[2] == "type":
-            present = get_path(teacher, ("road_composition", "pedestrian_crossings", "present", "value"))
-            return present is True
-        return True
-
-    # traffic_lights.present/state gating
-    if path[:2] == ("road_composition", "traffic_lights") and path[-1] == "value":
-        tl_vis = get_path(teacher, ("road_composition", "traffic_lights", "visible"))
-        if tl_vis is not True:
-            return False
-        if path[2] == "present":
-            return True
-        if path[2] == "visible_state":
-            present = get_path(teacher, ("road_composition", "traffic_lights", "present", "value"))
-            return present is True
-        return True
-
-    # signage subfields gated by signage.visible
-    if path[:2] == ("road_composition", "horizontal_signage") and path[-1] == "value":
-        vis = get_path(teacher, ("road_composition", "horizontal_signage", "visible"))
-        return vis is True
-
-    if path[:2] == ("road_composition", "vertical_signage") and path[-1] == "value":
-        vis = get_path(teacher, ("road_composition", "vertical_signage", "visible"))
+    # Any <section>.<field>.value gated by <section>.<field>.visible when pattern matches
+    if len(path) == 3 and path[-1] == "value":
+        sec, field, _ = path
+        vis = get_path(teacher, (sec, field, "visible"))
         return vis is True
 
     return True
@@ -299,88 +264,71 @@ def _score_leaf_slots(student: Dict[str, Any], teacher: Dict[str, Any], paths: L
 
 
 # ----------------------------
-# traffic_status scoring
+# List-valued scoring (set-based)
 # ----------------------------
 
 @dataclass
-class TrafficStatusScores:
+class ListValueScores:
     macro_acc: float
-    length_acc: float
-    per_lane_macro_acc: float
+    f1: float
     hits: List[float]
 
 
-def _lane_map(ts: Any) -> Dict[int, Dict[str, Any]]:
-    if not isinstance(ts, list):
-        return {}
-    out: Dict[int, Dict[str, Any]] = {}
-    for it in ts:
+def score_list_of_strings_value(student: Dict[str, Any], teacher: Dict[str, Any], base_path: Tuple[Any, ...]) -> ListValueScores:
+    """
+    Scores list-valued 'value' as set-F1, gated by corresponding visible==True in teacher.
+    """
+    # derive visible path from (..., "value") -> (..., "visible")
+    if len(base_path) < 3 or base_path[-1] != "value":
+        return ListValueScores(macro_acc=0.0, f1=0.0, hits=[])
+
+    vis_path = base_path[:-1] + ("visible",)
+    if get_path(teacher, vis_path) is not True:
+        return ListValueScores(macro_acc=0.0, f1=0.0, hits=[])
+
+    s_val = get_path(student, base_path)
+    t_val = get_path(teacher, base_path)
+
+    s_list = s_val if isinstance(s_val, list) else []
+    t_list = t_val if isinstance(t_val, list) else []
+    f1 = _set_f1(s_list, t_list)
+    hits = [f1]
+    return ListValueScores(macro_acc=float(np.mean(hits)), f1=f1, hits=hits)
+
+
+def _unknown_object_descriptions(arr: Any) -> List[str]:
+    if not isinstance(arr, list):
+        return []
+    out: List[str] = []
+    for it in arr:
         if not isinstance(it, dict):
             continue
-        lid = it.get("lane_id")
-        if isinstance(lid, int) and not isinstance(lid, bool):
-            out[lid] = it
+        d = it.get("description")
+        if isinstance(d, str):
+            out.append(d)
     return out
 
 
-def score_traffic_status(student: Dict[str, Any], teacher: Dict[str, Any]) -> TrafficStatusScores:
+def score_unknown_objects_descriptions(student: Dict[str, Any], teacher: Dict[str, Any]) -> ListValueScores:
     """
-    Scores traffic_status only when teacher traffic_status is a list.
-    If teacher traffic_status is null => score exact match on null vs list (length_acc),
-    but per-lane fields are not applicable.
+    Scores unknown_objects.value as set-F1 over descriptions, gated by unknown_objects.visible in teacher.
     """
-    s_ts = student.get("traffic_status")
-    t_ts = teacher.get("traffic_status")
+    vis_t = get_path(teacher, ("objects_of_interest", "unknown_objects", "visible"))
+    if vis_t is not True:
+        return ListValueScores(macro_acc=0.0, f1=0.0, hits=[])
 
-    hits: List[float] = []
+    s_val = get_path(student, ("objects_of_interest", "unknown_objects", "value"))
+    t_val = get_path(teacher, ("objects_of_interest", "unknown_objects", "value"))
 
-    # length/null accuracy (always scored)
-    if t_ts is None:
-        length_acc = 1.0 if s_ts is None else 0.0
-        hits.append(length_acc)
-        return TrafficStatusScores(macro_acc=float(np.mean(hits)), length_acc=length_acc, per_lane_macro_acc=0.0, hits=hits)
-
-    if not isinstance(t_ts, list):
-        # teacher malformed; keep metric conservative
-        length_acc = 0.0
-        hits.append(length_acc)
-        return TrafficStatusScores(macro_acc=float(np.mean(hits)), length_acc=length_acc, per_lane_macro_acc=0.0, hits=hits)
-
-    # teacher list => student should be list
-    length_acc = 1.0 if isinstance(s_ts, list) and len(s_ts) == len(t_ts) else 0.0
-    hits.append(length_acc)
-
-    tmap = _lane_map(t_ts)
-    smap = _lane_map(s_ts)
-
-    # Score per teacher lane_id, exact match on status.value and vehicle_density.value
-    lane_hits: List[float] = []
-    for lane_id, titem in tmap.items():
-        sitem = smap.get(lane_id, {})
-        # lane_id presence (weakly informative, but makes missing lanes penalize)
-        lane_hits.append(1.0 if lane_id in smap else 0.0)
-
-        sv = get_path(sitem, ("status", "value"))
-        tv = get_path(titem, ("status", "value"))
-        lane_hits.append(1.0 if sv == tv else 0.0)
-
-        svd = get_path(sitem, ("vehicle_density", "value"))
-        tvd = get_path(titem, ("vehicle_density", "value"))
-        lane_hits.append(1.0 if svd == tvd else 0.0)
-
-    per_lane_macro = float(np.mean(lane_hits)) if lane_hits else 0.0
-    hits.extend(lane_hits)
-
-    return TrafficStatusScores(
-        macro_acc=float(np.mean(hits)) if hits else 0.0,
-        length_acc=length_acc,
-        per_lane_macro_acc=per_lane_macro,
-        hits=hits,
-    )
+    s_desc = _unknown_object_descriptions(s_val)
+    t_desc = _unknown_object_descriptions(t_val)
+    f1 = _set_f1(s_desc, t_desc)
+    hits = [f1]
+    return ListValueScores(macro_acc=float(np.mean(hits)), f1=f1, hits=hits)
 
 
 # ----------------------------
-# vehicle/pedestrian events scoring (bag-of-events)
+# Events scoring (bag-of-events)
 # ----------------------------
 
 @dataclass
@@ -388,174 +336,90 @@ class EventScores:
     macro_acc: float
     presence_f1: float
     count_acc: float
+    persons_count_acc: float
+    span_acc: float
     hits: List[float]
 
 
-def _event_key_vehicle(ev: Dict[str, Any]) -> Optional[Tuple[str, str, str]]:
+def _event_key(ev: Dict[str, Any]) -> Optional[str]:
     if not isinstance(ev, dict):
         return None
     et = ev.get("event_type")
-    vt = ev.get("involved_vehicle_type")
-    rl = ev.get("risk_level")
-    if not (isinstance(et, str) and isinstance(vt, str) and isinstance(rl, str)):
+    return et if isinstance(et, str) else None
+
+
+def _event_span(ev: Dict[str, Any]) -> Optional[Tuple[int, int]]:
+    ts = ev.get("time_span_in_frames")
+    if not isinstance(ts, dict):
         return None
-    return (et, vt, rl)
+    s = ts.get("start_frame_index")
+    e = ts.get("end_frame_index")
+    if isinstance(s, int) and not isinstance(s, bool) and isinstance(e, int) and not isinstance(e, bool):
+        return (s, e)
+    return None
 
 
-def _event_key_ped(ev: Dict[str, Any]) -> Optional[Tuple[str, str, str]]:
-    if not isinstance(ev, dict):
-        return None
-    bh = ev.get("behavior")
-    loc = ev.get("location")
-    rl = ev.get("risk_level")
-    if not (isinstance(bh, str) and isinstance(loc, str) and isinstance(rl, str)):
-        return None
-    return (bh, loc, rl)
+def _event_persons_count(ev: Dict[str, Any]) -> Any:
+    return ev.get("approx_involved_persons_count")
 
 
-def _event_counts(arr: Any, key_fn) -> Dict[Any, int]:
-    out: Dict[Any, int] = {}
+def _events_by_type(arr: Any) -> Dict[str, List[Dict[str, Any]]]:
+    out: Dict[str, List[Dict[str, Any]]] = {}
     if not isinstance(arr, list):
         return out
     for ev in arr:
         if not isinstance(ev, dict):
             continue
-        k = key_fn(ev)
+        k = _event_key(ev)
         if k is None:
             continue
-        c = ev.get("count")
-        if not (isinstance(c, int) and not isinstance(c, bool)):
-            # treat bad/missing count as 0 for scoring purposes
-            c = 0
-        out[k] = out.get(k, 0) + int(c)
+        out.setdefault(k, []).append(ev)
     return out
 
 
-def score_vehicle_events(student: Dict[str, Any], teacher: Dict[str, Any]) -> EventScores:
-    s = student.get("vehicle_events")
-    t = teacher.get("vehicle_events")
+def score_events(student: Dict[str, Any], teacher: Dict[str, Any]) -> EventScores:
+    s = student.get("events")
+    t = teacher.get("events")
 
-    s_counts = _event_counts(s, _event_key_vehicle)
-    t_counts = _event_counts(t, _event_key_vehicle)
+    s_map = _events_by_type(s)
+    t_map = _events_by_type(t)
 
-    s_keys = set(s_counts.keys())
-    t_keys = set(t_counts.keys())
+    s_types = set(s_map.keys())
+    t_types = set(t_map.keys())
 
-    presence_f1 = _set_f1(s_keys, t_keys)
+    presence_f1 = _set_f1(s_types, t_types)
 
-    # count accuracy: exact match per teacher key (missing => 0)
+    # count accuracy per type (exact)
     count_hits: List[float] = []
-    for k in t_keys:
-        count_hits.append(1.0 if s_counts.get(k, 0) == t_counts.get(k, 0) else 0.0)
+    for et in t_types:
+        count_hits.append(1.0 if len(s_map.get(et, [])) == len(t_map.get(et, [])) else 0.0)
     count_acc = float(np.mean(count_hits)) if count_hits else 1.0
 
-    hits = [presence_f1, count_acc]
+    # persons_count_acc: compare multiset of counts per type (exact as strings)
+    pc_hits: List[float] = []
+    for et in t_types:
+        s_counts = [str(_event_persons_count(ev)) for ev in s_map.get(et, [])]
+        t_counts = [str(_event_persons_count(ev)) for ev in t_map.get(et, [])]
+        pc_hits.append(1.0 if sorted(s_counts) == sorted(t_counts) else 0.0)
+    persons_count_acc = float(np.mean(pc_hits)) if pc_hits else 1.0
+
+    # span_acc: compare multiset of spans per type (exact)
+    span_hits: List[float] = []
+    for et in t_types:
+        s_spans = [str(_event_span(ev)) for ev in s_map.get(et, [])]
+        t_spans = [str(_event_span(ev)) for ev in t_map.get(et, [])]
+        span_hits.append(1.0 if sorted(s_spans) == sorted(t_spans) else 0.0)
+    span_acc = float(np.mean(span_hits)) if span_hits else 1.0
+
+    hits = [presence_f1, count_acc, persons_count_acc, span_acc]
     macro = float(np.mean(hits)) if hits else 0.0
-    return EventScores(macro_acc=macro, presence_f1=presence_f1, count_acc=count_acc, hits=hits)
-
-
-def score_pedestrian_events(student: Dict[str, Any], teacher: Dict[str, Any]) -> EventScores:
-    s = student.get("pedestrian_events")
-    t = teacher.get("pedestrian_events")
-
-    s_counts = _event_counts(s, _event_key_ped)
-    t_counts = _event_counts(t, _event_key_ped)
-
-    s_keys = set(s_counts.keys())
-    t_keys = set(t_counts.keys())
-
-    presence_f1 = _set_f1(s_keys, t_keys)
-
-    count_hits: List[float] = []
-    for k in t_keys:
-        count_hits.append(1.0 if s_counts.get(k, 0) == t_counts.get(k, 0) else 0.0)
-    count_acc = float(np.mean(count_hits)) if count_hits else 1.0
-
-    hits = [presence_f1, count_acc]
-    macro = float(np.mean(hits)) if hits else 0.0
-    return EventScores(macro_acc=macro, presence_f1=presence_f1, count_acc=count_acc, hits=hits)
-
-
-# ----------------------------
-# Risk Assessment scoring (unchanged structure, still separate)
-# ----------------------------
-
-@dataclass
-class RiskObsScores:
-    macro_acc: float
-    vehicle_ids_f1: float
-    pairs_f1: float
-    overall_risk_level_acc: float
-    main_risk_factors_f1: float
-
-
-def _first_ra(obj: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    ra = obj.get("Risk Assessment")
-    if not isinstance(ra, list) or not ra:
-        return None
-    return ra[0] if isinstance(ra[0], dict) else None
-
-
-def score_risk_assessment(student: Dict[str, Any], teacher: Dict[str, Any]) -> RiskObsScores:
-    sra = _first_ra(student)
-    tra = _first_ra(teacher)
-    if sra is None or tra is None:
-        return RiskObsScores(macro_acc=0.0, vehicle_ids_f1=0.0, pairs_f1=0.0, overall_risk_level_acc=0.0, main_risk_factors_f1=0.0)
-
-    so = sra.get("observations")
-    to = tra.get("observations")
-    if not isinstance(so, dict) or not isinstance(to, dict):
-        return RiskObsScores(macro_acc=0.0, vehicle_ids_f1=0.0, pairs_f1=0.0, overall_risk_level_acc=0.0, main_risk_factors_f1=0.0)
-
-    per_field: List[float] = []
-
-    def score_obs_key(k: str) -> None:
-        # visible always
-        per_field.append(1.0 if get_path(so, (k, "visible")) == get_path(to, (k, "visible")) else 0.0)
-
-        # value gated by teacher visible==true
-        if get_path(to, (k, "visible")) is True:
-            per_field.append(1.0 if get_path(so, (k, "value")) == get_path(to, (k, "value")) else 0.0)
-
-    for k in RISK_OBS_VEH_IDS:
-        score_obs_key(k)
-    for k in RISK_OBS_PAIRS:
-        score_obs_key(k)
-
-    macro_acc = float(np.mean(per_field)) if per_field else 0.0
-
-    id_f1s: List[float] = []
-    for k in RISK_OBS_VEH_IDS:
-        if get_path(to, (k, "value")) is True:
-            sid = get_path(so, (k, "vehicle_ids")) or []
-            tid = get_path(to, (k, "vehicle_ids")) or []
-            id_f1s.append(_set_f1(sid, tid))
-    vehicle_ids_f1 = float(np.mean(id_f1s)) if id_f1s else 0.0
-
-    pair_f1s: List[float] = []
-    for k in RISK_OBS_PAIRS:
-        if get_path(to, (k, "value")) is True:
-            spairs = get_path(so, (k, "pairs")) or []
-            tpairs = get_path(to, (k, "pairs")) or []
-            spk = [pk for pk in (_pair_key(p) for p in spairs) if pk is not None]
-            tpk = [pk for pk in (_pair_key(p) for p in tpairs) if pk is not None]
-            pair_f1s.append(_set_f1(spk, tpk))
-    pairs_f1 = float(np.mean(pair_f1s)) if pair_f1s else 0.0
-
-    srl = get_path(sra, ("overall_risk_assessment", "risk_level", "value"))
-    trl = get_path(tra, ("overall_risk_assessment", "risk_level", "value"))
-    overall_risk_level_acc = 1.0 if (srl == trl) else 0.0
-
-    smrf = get_path(sra, ("overall_risk_assessment", "main_risk_factors")) or []
-    tmrf = get_path(tra, ("overall_risk_assessment", "main_risk_factors")) or []
-    main_risk_factors_f1 = _set_f1(smrf, tmrf)
-
-    return RiskObsScores(
-        macro_acc=macro_acc,
-        vehicle_ids_f1=vehicle_ids_f1,
-        pairs_f1=pairs_f1,
-        overall_risk_level_acc=overall_risk_level_acc,
-        main_risk_factors_f1=main_risk_factors_f1,
+    return EventScores(
+        macro_acc=macro,
+        presence_f1=presence_f1,
+        count_acc=count_acc,
+        persons_count_acc=persons_count_acc,
+        span_acc=span_acc,
+        hits=hits,
     )
 
 
@@ -566,11 +430,12 @@ def score_risk_assessment(student: Dict[str, Any], teacher: Dict[str, Any]) -> R
 @dataclass
 class GlobalSlotScores:
     global_macro_acc: float
-    road_composition_macro_acc: float
-    environmental_macro_acc: float
-    traffic_status_macro_acc: float
-    vehicle_events_macro_acc: float
-    pedestrian_events_macro_acc: float
+    scene_context_macro_acc: float
+    crowd_and_flow_macro_acc: float
+    observable_interactions_macro_acc: float
+    objects_of_interest_macro_acc: float
+    uncertainty_summary_macro_acc: float
+    events_macro_acc: float
 
 
 def score_global_and_sections(student: Dict[str, Any], teacher: Dict[str, Any]) -> Tuple[GlobalSlotScores, Dict[str, List[float]]]:
@@ -579,35 +444,53 @@ def score_global_and_sections(student: Dict[str, Any], teacher: Dict[str, Any]) 
       - section/global macro scores
       - raw hit lists per section (used to compute global as a true macro over leaves)
     """
-    road = _score_leaf_slots(student, teacher, ROAD_COMPOSITION_SLOTS)
-    env = _score_leaf_slots(student, teacher, ENVIRONMENT_SLOTS)
-    ts = score_traffic_status(student, teacher)
-    ve = score_vehicle_events(student, teacher)
-    pe = score_pedestrian_events(student, teacher)
+    sc = _score_leaf_slots(student, teacher, SCENE_CONTEXT_SLOTS)
+    cf = _score_leaf_slots(student, teacher, CROWD_FLOW_SLOTS)
+    oi = _score_leaf_slots(student, teacher, INTERACTIONS_SLOTS)
+    obj_scalar = _score_leaf_slots(student, teacher, OBJECTS_SCALAR_SLOTS)
+    unc_scalar = _score_leaf_slots(student, teacher, UNCERTAINTY_SCALAR_SLOTS)
 
-    # Global = mean over all hits across all sections (true global leaf macro)
-    all_hits = road.hits + env.hits + ts.hits + ve.hits + pe.hits
+    # List-valued extras (each contributes one hit, gated)
+    harm = score_list_of_strings_value(student, teacher, LIST_VALUE_PATHS["identified_harm_instruments"])
+    unk = score_unknown_objects_descriptions(student, teacher)
+    amb = score_list_of_strings_value(student, teacher, LIST_VALUE_PATHS["key_ambiguities"])
+    dqi = score_list_of_strings_value(student, teacher, LIST_VALUE_PATHS["data_quality_issues"])
+
+    ev = score_events(student, teacher)
+
+    # Compose per-section hits
+    scene_hits = sc.hits
+    crowd_hits = cf.hits
+    interaction_hits = oi.hits
+
+    objects_hits = obj_scalar.hits + harm.hits + unk.hits
+    uncertainty_hits = unc_scalar.hits + amb.hits + dqi.hits
+    events_hits = ev.hits
+
+    all_hits = scene_hits + crowd_hits + interaction_hits + objects_hits + uncertainty_hits + events_hits
     global_macro = float(np.mean(all_hits)) if all_hits else 0.0
 
     sec = GlobalSlotScores(
         global_macro_acc=global_macro,
-        road_composition_macro_acc=road.macro_acc,
-        environmental_macro_acc=env.macro_acc,
-        traffic_status_macro_acc=ts.macro_acc,
-        vehicle_events_macro_acc=ve.macro_acc,
-        pedestrian_events_macro_acc=pe.macro_acc,
+        scene_context_macro_acc=sc.macro_acc,
+        crowd_and_flow_macro_acc=cf.macro_acc,
+        observable_interactions_macro_acc=oi.macro_acc,
+        objects_of_interest_macro_acc=float(np.mean(objects_hits)) if objects_hits else 0.0,
+        uncertainty_summary_macro_acc=float(np.mean(uncertainty_hits)) if uncertainty_hits else 0.0,
+        events_macro_acc=ev.macro_acc,
     )
     return sec, {
-        "road": road.hits,
-        "env": env.hits,
-        "traffic_status": ts.hits,
-        "vehicle_events": ve.hits,
-        "pedestrian_events": pe.hits,
+        "scene_context": scene_hits,
+        "crowd_and_flow": crowd_hits,
+        "observable_interactions": interaction_hits,
+        "objects_of_interest": objects_hits,
+        "uncertainty_summary": uncertainty_hits,
+        "events": events_hits,
     }
 
 
 # ----------------------------
-# Validation (best-effort, kept similar)
+# Validation (best-effort)
 # ----------------------------
 
 @dataclass
@@ -630,116 +513,146 @@ def validate_struct(obj: Optional[Dict[str, Any]]) -> ValidationReport:
         return ValidationReport(parse_ok=False, schema_ok=False, rule_ok=False, errors=["parse_failed_or_not_object"])
 
     errors: List[str] = []
+    rule_ok = True
 
     required_top = [
-        "road_composition",
-        "environmental_conditions",
-        "traffic_status",
-        "vehicle_events",
-        "pedestrian_events",
-        "Risk Assessment",
+        "scene_context",
+        "crowd_and_flow",
+        "observable_interactions",
+        "objects_of_interest",
+        "events",
+        "uncertainty_summary",
     ]
     for k in required_top:
         if k not in obj:
             errors.append(f"missing_top_level:{k}")
 
-    rc = obj.get("road_composition")
-    ec = obj.get("environmental_conditions")
-    if not isinstance(rc, dict):
-        errors.append("not_object:road_composition")
-    if not isinstance(ec, dict):
-        errors.append("not_object:environmental_conditions")
+    # type checks
+    if not isinstance(obj.get("scene_context"), dict):
+        errors.append("not_object:scene_context")
+    if not isinstance(obj.get("crowd_and_flow"), dict):
+        errors.append("not_object:crowd_and_flow")
+    if not isinstance(obj.get("observable_interactions"), dict):
+        errors.append("not_object:observable_interactions")
+    if not isinstance(obj.get("objects_of_interest"), dict):
+        errors.append("not_object:objects_of_interest")
+    if not isinstance(obj.get("uncertainty_summary"), dict):
+        errors.append("not_object:uncertainty_summary")
 
-    ts = obj.get("traffic_status")
-    if ts is not None and not isinstance(ts, list):
-        errors.append("traffic_status_not_null_or_list")
+    ev = obj.get("events")
+    if not isinstance(ev, list):
+        errors.append("events_not_list")
 
-    ve = obj.get("vehicle_events")
-    pe = obj.get("pedestrian_events")
-    if not isinstance(ve, list):
-        errors.append("vehicle_events_not_list")
-    if not isinstance(pe, list):
-        errors.append("pedestrian_events_not_list")
+    # confidence checks: scan dicts that look like {visible, value, confidence}
+    def check_triplet(sec: str, field: str) -> None:
+        base = get_path(obj, (sec, field))
+        if not isinstance(base, dict):
+            errors.append(f"not_object:{sec}.{field}")
+            return
+        v = base.get("visible")
+        if not isinstance(v, bool):
+            errors.append(f"bad_visible:{sec}.{field}.visible={v}")
+        c = base.get("confidence")
+        if c is None:
+            errors.append(f"missing_conf:{sec}.{field}.confidence")
+        elif not is_confidence(c):
+            errors.append(f"bad_conf:{sec}.{field}.confidence={c}")
 
-    ra = obj.get("Risk Assessment")
-    if not isinstance(ra, list):
-        errors.append("risk_assessment_not_list")
+    for fld in ["location_type", "lighting", "weather_visibility", "camera_view"]:
+        check_triplet("scene_context", fld)
+    for fld in ["gathering_present", "estimated_count", "movement_pattern", "density_level"]:
+        check_triplet("crowd_and_flow", fld)
+    for fld in ["physical_contact_present", "contact_type_if_any", "verbal_exchange_apparent", "high_amplitude_gestures_visible"]:
+        check_triplet("observable_interactions", fld)
+    for fld in ["harm_instrument_clearly_identifiable", "identified_harm_instruments", "unknown_objects"]:
+        check_triplet("objects_of_interest", fld)
+    for fld in ["key_ambiguities", "data_quality_issues"]:
+        check_triplet("uncertainty_summary", fld)
 
-    # Lane dependency rule
-    rule_ok = True
-    nol_vis = get_path(obj, ("road_composition", "number_of_lanes", "visible"))
-    nol_val = get_path(obj, ("road_composition", "number_of_lanes", "value"))
-
-    if nol_vis is True:
-        if ts is None:
-            errors.append("rule_lane:visible_true_but_traffic_status_null")
-            rule_ok = False
-        if not is_int_or_unknown(nol_val):
-            errors.append(f"rule_lane:number_of_lanes.value_bad={nol_val}")
-            rule_ok = False
-        if isinstance(nol_val, int):
-            if not isinstance(ts, list) or len(ts) != nol_val:
-                got = 0 if ts is None else (len(ts) if isinstance(ts, list) else -1)
-                errors.append(f"rule_lane:traffic_status_len_mismatch expected={nol_val} got={got}")
-                rule_ok = False
-    elif nol_vis is False:
-        if ts is not None:
-            errors.append("rule_lane:visible_false_but_traffic_status_not_null")
-            rule_ok = False
-    else:
-        errors.append("missing_or_bad_visible:road_composition.number_of_lanes.visible")
+    # basic value-type rules for a few fields
+    est_count = get_path(obj, ("crowd_and_flow", "estimated_count", "value"))
+    if not is_int_or_unknown(est_count):
+        errors.append(f"bad_value:crowd_and_flow.estimated_count.value={est_count}")
         rule_ok = False
 
-    # Confidence range checks (best-effort): scan a few known places + traffic_status and events
-    # (This stays light; scoring does not use confidence.)
-    def check_conf(path: Tuple[Any, ...], tag: str) -> None:
-        v = get_path(obj, path)
-        if v is None:
-            errors.append(f"missing_conf:{tag}")
-        elif not is_confidence(v):
-            errors.append(f"bad_conf:{tag}={v}")
+    # objects_of_interest list fields
+    ih = get_path(obj, ("objects_of_interest", "identified_harm_instruments", "value"))
+    if ih is not None and not isinstance(ih, list):
+        errors.append("bad_type:objects_of_interest.identified_harm_instruments.value_not_list")
+        rule_ok = False
 
-    # road/env main triplets
-    for fld in ["number_of_lanes", "lane_directions", "road_type"]:
-        check_conf(("road_composition", fld, "confidence"), f"road_composition.{fld}.confidence")
-    for fld in ["weather", "precipitation_intensity", "ambient_visibility", "road_surface_condition", "lighting_conditions", "wind_conditions"]:
-        check_conf(("environmental_conditions", fld, "confidence"), f"environmental_conditions.{fld}.confidence")
-
-    # traffic_status per-lane confs
-    if isinstance(ts, list):
-        for i, it in enumerate(ts):
+    uo = get_path(obj, ("objects_of_interest", "unknown_objects", "value"))
+    if uo is not None and not isinstance(uo, list):
+        errors.append("bad_type:objects_of_interest.unknown_objects.value_not_list")
+        rule_ok = False
+    if isinstance(uo, list):
+        for i, it in enumerate(uo):
             if not isinstance(it, dict):
-                errors.append(f"traffic_status[{i}]_not_object")
+                errors.append(f"unknown_objects[{i}]_not_object")
+                rule_ok = False
                 continue
-            check_conf(("traffic_status", i, "status", "confidence"), f"traffic_status[{i}].status.confidence")  # will fail due to int indexing in get_path
-            # do manual for list items
-            sc = get_path(it, ("status", "confidence"))
-            if sc is None:
-                errors.append(f"missing_conf:traffic_status[{i}].status.confidence")
-            elif not is_confidence(sc):
-                errors.append(f"bad_conf:traffic_status[{i}].status.confidence={sc}")
-
-            dc = get_path(it, ("vehicle_density", "confidence"))
-            if dc is None:
-                errors.append(f"missing_conf:traffic_status[{i}].vehicle_density.confidence")
-            elif not is_confidence(dc):
-                errors.append(f"bad_conf:traffic_status[{i}].vehicle_density.confidence={dc}")
-
-    # event confs
-    def check_events_conf(arr: Any, kind: str) -> None:
-        if not isinstance(arr, list):
-            return
-        for i, evv in enumerate(arr):
-            if not isinstance(evv, dict):
-                continue
-            c = evv.get("confidence")
+            d = it.get("description")
+            if d is None or not isinstance(d, str):
+                errors.append(f"unknown_objects[{i}].description_missing_or_not_str")
+                rule_ok = False
+            c = it.get("confidence")
             if c is None:
-                errors.append(f"missing_conf:{kind}[{i}].confidence")
+                errors.append(f"missing_conf:unknown_objects[{i}].confidence")
+                rule_ok = False
             elif not is_confidence(c):
-                errors.append(f"bad_conf:{kind}[{i}].confidence={c}")
+                errors.append(f"bad_conf:unknown_objects[{i}].confidence={c}")
+                rule_ok = False
 
-    check_events_conf(ve, "vehicle_events")
-    check_events_conf(pe, "pedestrian_events")
+    # uncertainty list fields
+    ka = get_path(obj, ("uncertainty_summary", "key_ambiguities", "value"))
+    if ka is not None and not isinstance(ka, list):
+        errors.append("bad_type:uncertainty_summary.key_ambiguities.value_not_list")
+        rule_ok = False
+    dqi = get_path(obj, ("uncertainty_summary", "data_quality_issues", "value"))
+    if dqi is not None and not isinstance(dqi, list):
+        errors.append("bad_type:uncertainty_summary.data_quality_issues.value_not_list")
+        rule_ok = False
+
+    # events checks
+    if isinstance(ev, list):
+        for i, e in enumerate(ev):
+            if not isinstance(e, dict):
+                errors.append(f"events[{i}]_not_object")
+                rule_ok = False
+                continue
+            et = e.get("event_type")
+            if not isinstance(et, str):
+                errors.append(f"events[{i}].event_type_missing_or_not_str")
+                rule_ok = False
+            pc = e.get("approx_involved_persons_count")
+            if not is_int_or_unknown(pc):
+                errors.append(f"events[{i}].approx_involved_persons_count_bad={pc}")
+                rule_ok = False
+            ts = e.get("time_span_in_frames")
+            if not isinstance(ts, dict):
+                errors.append(f"events[{i}].time_span_in_frames_not_object")
+                rule_ok = False
+            else:
+                s = ts.get("start_frame_index")
+                en = ts.get("end_frame_index")
+                if not (isinstance(s, int) and not isinstance(s, bool)):
+                    errors.append(f"events[{i}].time_span_in_frames.start_frame_index_bad={s}")
+                    rule_ok = False
+                if not (isinstance(en, int) and not isinstance(en, bool)):
+                    errors.append(f"events[{i}].time_span_in_frames.end_frame_index_bad={en}")
+                    rule_ok = False
+            c = e.get("confidence")
+            if c is None:
+                errors.append(f"missing_conf:events[{i}].confidence")
+                rule_ok = False
+            elif not is_confidence(c):
+                errors.append(f"bad_conf:events[{i}].confidence={c}")
+                rule_ok = False
+            # description existence (not scored, but schema says it exists)
+            desc = e.get("description")
+            if desc is None or not isinstance(desc, str):
+                errors.append(f"events[{i}].description_missing_or_not_str")
+                rule_ok = False
 
     # Enum checks (non-wildcard)
     for path, allowed in ENUMS.items():
@@ -748,35 +661,12 @@ def validate_struct(obj: Optional[Dict[str, Any]]) -> ValidationReport:
         v = get_path(obj, path)
         _check_enum(v, allowed, ".".join(map(str, path)), errors)
 
-    # Enum checks (wildcard)
-    if isinstance(ts, list):
-        for i, it in enumerate(ts):
-            if not isinstance(it, dict):
+    # Enum checks (wildcard) for events
+    if isinstance(ev, list):
+        for i, e in enumerate(ev):
+            if not isinstance(e, dict):
                 continue
-            _check_enum(get_path(it, ("status", "value")), ENUMS[("traffic_status", "*", "status", "value")], f"traffic_status[{i}].status.value", errors)
-            _check_enum(
-                get_path(it, ("vehicle_density", "value")),
-                ENUMS[("traffic_status", "*", "vehicle_density", "value")],
-                f"traffic_status[{i}].vehicle_density.value",
-                errors,
-            )
-
-    if isinstance(ve, list):
-        for i, evv in enumerate(ve):
-            if not isinstance(evv, dict):
-                continue
-            _check_enum(evv.get("event_type"), ENUMS[("vehicle_events", "*", "event_type")], f"vehicle_events[{i}].event_type", errors)
-            _check_enum(evv.get("involved_vehicle_type"), ENUMS[("vehicle_events", "*", "involved_vehicle_type")], f"vehicle_events[{i}].involved_vehicle_type", errors)
-            _check_enum(evv.get("risk_level"), ENUMS[("vehicle_events", "*", "risk_level")], f"vehicle_events[{i}].risk_level", errors)
-
-    if isinstance(pe, list):
-        for i, evv in enumerate(pe):
-            if not isinstance(evv, dict):
-                continue
-            _check_enum(evv.get("behavior"), ENUMS[("pedestrian_events", "*", "behavior")], f"pedestrian_events[{i}].behavior", errors)
-            _check_enum(evv.get("location"), ENUMS[("pedestrian_events", "*", "location")], f"pedestrian_events[{i}].location", errors)
-            _check_enum(evv.get("interaction_with_vehicles"), ENUMS[("pedestrian_events", "*", "interaction_with_vehicles")], f"pedestrian_events[{i}].interaction_with_vehicles", errors)
-            _check_enum(evv.get("risk_level"), ENUMS[("pedestrian_events", "*", "risk_level")], f"pedestrian_events[{i}].risk_level", errors)
+            _check_enum(e.get("event_type"), ENUMS[("events", "*", "event_type")], f"events[{i}].event_type", errors)
 
     schema_ok = not any(
         e.startswith("missing_top_level:")
@@ -787,7 +677,7 @@ def validate_struct(obj: Optional[Dict[str, Any]]) -> ValidationReport:
         for e in errors
     )
 
-    if any(e.startswith("bad_conf:") or e.startswith("rule_lane:") for e in errors):
+    if any(e.startswith("bad_conf:") or e.startswith("bad_visible:") for e in errors):
         rule_ok = False
 
     return ValidationReport(parse_ok=True, schema_ok=schema_ok, rule_ok=rule_ok, errors=errors)
@@ -798,9 +688,7 @@ def validate_struct(obj: Optional[Dict[str, Any]]) -> ValidationReport:
 # ----------------------------
 
 def discover_teacher_standards(results_gold: Path) -> List[Tuple[str, Path]]:
-    suffixes = [
-        ".json",
-    ]
+    suffixes = [".json"]
     out: List[Tuple[str, Path]] = []
     for p in sorted(results_gold.iterdir()):
         if not p.is_file():
@@ -838,8 +726,6 @@ def discover_student_files(results: Path, video_id: str) -> List[Tuple[str, Path
         if matched_suffix is None:
             continue
         stem = name[: -len(matched_suffix)] if matched_suffix != ".json" else name[: -len(".json")]
-        # Match "<video_id>_<model>" anywhere with "_" boundary before video_id.
-        # This covers "question_<video_id>_<model>" and optional numeric prefixes.
         m = vid_re.search(stem)
         if m:
             model = m.group(1) or "unknown"
@@ -858,8 +744,8 @@ def _sym_global_slot_acc(a: Dict[str, Any], b: Dict[str, Any]) -> float:
     return 0.5 * (sa.global_macro_acc + sb.global_macro_acc)
 
 
-def _sym_risk_obs_acc(a: Dict[str, Any], b: Dict[str, Any]) -> float:
-    return 0.5 * (score_risk_assessment(a, b).macro_acc + score_risk_assessment(b, a).macro_acc)
+def _sym_events_acc(a: Dict[str, Any], b: Dict[str, Any]) -> float:
+    return 0.5 * (score_events(a, b).macro_acc + score_events(b, a).macro_acc)
 
 
 def compute_teacher_run_consensus_weight(results_gold: Path, video_id: str) -> float:
@@ -881,8 +767,8 @@ def compute_teacher_run_consensus_weight(results_gold: Path, video_id: str) -> f
     for i in range(len(runs)):
         for j in range(i + 1, len(runs)):
             gpair = _sym_global_slot_acc(runs[i], runs[j])
-            rpair = _sym_risk_obs_acc(runs[i], runs[j])
-            pair_scores.append(0.5 * gpair + 0.5 * rpair)
+            epair = _sym_events_acc(runs[i], runs[j])
+            pair_scores.append(0.5 * gpair + 0.5 * epair)
 
     if not pair_scores:
         return 1.0
@@ -912,11 +798,15 @@ def weighted_mean(values: pd.Series, weights: pd.Series) -> float:
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
     ap.add_argument("--results-gold", type=Path, default=GT_DIR)
-    ap.add_argument("--results", type=Path, default=BASE_DIR / "results-cosmos")
-    ap.add_argument("--out", type=Path, default=BASE_DIR / "eval_out")
+    ap.add_argument("--results", type=Path, default=BASE_DIR / "results_person")
+    ap.add_argument("--out", type=Path, default=BASE_DIR / "eval_out_person")
     ap.add_argument("--limit-videos", type=int, default=None)
     ap.add_argument("--model", action="append", default=None, help="Evaluate only specified model name(s). Can be repeated.")
-    ap.add_argument("--include-teacher-runs", action="store_true", help="Compute per-video consensus weights from teacher runs and report weighted means.")
+    ap.add_argument(
+        "--include-teacher-runs",
+        action="store_true",
+        help="Compute per-video consensus weights from teacher runs and report weighted means.",
+    )
     ap.add_argument("--verbose", action=argparse.BooleanOptionalAction, default=True)
     return ap.parse_args()
 
@@ -965,33 +855,33 @@ def main() -> None:
             vrep = validate_struct(student)
 
             global_slot = None
-            road_slot = None
-            env_slot = None
-            ts_slot = None
-            veh_events_slot = None
-            ped_events_slot = None
+            scene_slot = None
+            crowd_slot = None
+            interact_slot = None
+            objects_slot = None
+            uncertainty_slot = None
+            events_macro = None
 
-            risk_obs_macro = None
-            risk_vehicle_ids_f1 = None
-            risk_pairs_f1 = None
-            overall_risk_level_acc = None
-            main_risk_factors_f1 = None
+            events_presence_f1 = None
+            events_count_acc = None
+            events_persons_count_acc = None
+            events_span_acc = None
 
             if student is not None:
                 sec, _hits = score_global_and_sections(student, teacher)
                 global_slot = sec.global_macro_acc
-                road_slot = sec.road_composition_macro_acc
-                env_slot = sec.environmental_macro_acc
-                ts_slot = sec.traffic_status_macro_acc
-                veh_events_slot = sec.vehicle_events_macro_acc
-                ped_events_slot = sec.pedestrian_events_macro_acc
+                scene_slot = sec.scene_context_macro_acc
+                crowd_slot = sec.crowd_and_flow_macro_acc
+                interact_slot = sec.observable_interactions_macro_acc
+                objects_slot = sec.objects_of_interest_macro_acc
+                uncertainty_slot = sec.uncertainty_summary_macro_acc
+                events_macro = sec.events_macro_acc
 
-                ra = score_risk_assessment(student, teacher)
-                risk_obs_macro = ra.macro_acc
-                risk_vehicle_ids_f1 = ra.vehicle_ids_f1
-                risk_pairs_f1 = ra.pairs_f1
-                overall_risk_level_acc = ra.overall_risk_level_acc
-                main_risk_factors_f1 = ra.main_risk_factors_f1
+                evs = score_events(student, teacher)
+                events_presence_f1 = evs.presence_f1
+                events_count_acc = evs.count_acc
+                events_persons_count_acc = evs.persons_count_acc
+                events_span_acc = evs.span_acc
 
             rows.append(
                 {
@@ -1001,16 +891,16 @@ def main() -> None:
                     "schema_ok": vrep.schema_ok,
                     "rule_ok": vrep.rule_ok,
                     "global_slot_macro_acc": global_slot,
-                    "road_composition_slot_macro_acc": road_slot,
-                    "environmental_conditions_slot_macro_acc": env_slot,
-                    "traffic_status_macro_acc": ts_slot,
-                    "vehicle_events_macro_acc": veh_events_slot,
-                    "pedestrian_events_macro_acc": ped_events_slot,
-                    "risk_obs_macro_acc": risk_obs_macro,
-                    "risk_vehicle_ids_f1": risk_vehicle_ids_f1,
-                    "risk_pairs_f1": risk_pairs_f1,
-                    "overall_risk_level_acc": overall_risk_level_acc,
-                    "main_risk_factors_f1": main_risk_factors_f1,
+                    "scene_context_slot_macro_acc": scene_slot,
+                    "crowd_and_flow_slot_macro_acc": crowd_slot,
+                    "observable_interactions_slot_macro_acc": interact_slot,
+                    "objects_of_interest_slot_macro_acc": objects_slot,
+                    "uncertainty_summary_slot_macro_acc": uncertainty_slot,
+                    "events_macro_acc": events_macro,
+                    "events_presence_f1": events_presence_f1,
+                    "events_count_acc": events_count_acc,
+                    "events_persons_count_acc": events_persons_count_acc,
+                    "events_span_acc": events_span_acc,
                     "teacher_consensus_weight": consensus_weight,
                     "student_path": str(student_path),
                     "teacher_path": str(teacher_path),
@@ -1048,13 +938,13 @@ def main() -> None:
             rule_rate = float(g2["rule_ok"].mean())
 
             global_mean = mean_or_nan("global_slot_macro_acc")
-            risk_obs_mean = mean_or_nan("risk_obs_macro_acc")
+            events_mean = mean_or_nan("events_macro_acc")
 
             weighted_global = float("nan")
-            weighted_risk_obs = float("nan")
+            weighted_events = float("nan")
             if args.include_teacher_runs:
                 weighted_global = weighted_mean(g2["global_slot_macro_acc"], g2["teacher_consensus_weight"])
-                weighted_risk_obs = weighted_mean(g2["risk_obs_macro_acc"], g2["teacher_consensus_weight"])
+                weighted_events = weighted_mean(g2["events_macro_acc"], g2["teacher_consensus_weight"])
 
             agg_rows.append(
                 {
@@ -1064,25 +954,25 @@ def main() -> None:
                     "schema_rate": schema_rate,
                     "rule_rate": rule_rate,
                     "global_slot_macro_acc_mean": global_mean,
-                    "road_composition_slot_macro_acc_mean": mean_or_nan("road_composition_slot_macro_acc"),
-                    "environmental_conditions_slot_macro_acc_mean": mean_or_nan("environmental_conditions_slot_macro_acc"),
-                    "traffic_status_macro_acc_mean": mean_or_nan("traffic_status_macro_acc"),
-                    "vehicle_events_macro_acc_mean": mean_or_nan("vehicle_events_macro_acc"),
-                    "pedestrian_events_macro_acc_mean": mean_or_nan("pedestrian_events_macro_acc"),
-                    "risk_obs_macro_acc_mean": risk_obs_mean,
-                    "risk_vehicle_ids_f1_mean": mean_or_nan("risk_vehicle_ids_f1"),
-                    "risk_pairs_f1_mean": mean_or_nan("risk_pairs_f1"),
-                    "overall_risk_level_acc_mean": mean_or_nan("overall_risk_level_acc"),
-                    "main_risk_factors_f1_mean": mean_or_nan("main_risk_factors_f1"),
+                    "scene_context_slot_macro_acc_mean": mean_or_nan("scene_context_slot_macro_acc"),
+                    "crowd_and_flow_slot_macro_acc_mean": mean_or_nan("crowd_and_flow_slot_macro_acc"),
+                    "observable_interactions_slot_macro_acc_mean": mean_or_nan("observable_interactions_slot_macro_acc"),
+                    "objects_of_interest_slot_macro_acc_mean": mean_or_nan("objects_of_interest_slot_macro_acc"),
+                    "uncertainty_summary_slot_macro_acc_mean": mean_or_nan("uncertainty_summary_slot_macro_acc"),
+                    "events_macro_acc_mean": events_mean,
+                    "events_presence_f1_mean": mean_or_nan("events_presence_f1"),
+                    "events_count_acc_mean": mean_or_nan("events_count_acc"),
+                    "events_persons_count_acc_mean": mean_or_nan("events_persons_count_acc"),
+                    "events_span_acc_mean": mean_or_nan("events_span_acc"),
                     "weight_global_slot_macro_acc_mean": weighted_global,
-                    "weight_risk_obs_macro_acc_mean": weighted_risk_obs,
+                    "weight_events_macro_acc_mean": weighted_events,
                 }
             )
 
     df_agg = pd.DataFrame(agg_rows)
     if not df_agg.empty:
         df_agg = df_agg.sort_values(
-            by=["rule_rate", "global_slot_macro_acc_mean", "risk_obs_macro_acc_mean"],
+            by=["rule_rate", "global_slot_macro_acc_mean", "events_macro_acc_mean"],
             ascending=False,
         )
 

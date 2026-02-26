@@ -33,7 +33,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from huggingface_hub import login  # noqa: E402
 
-from vllm_utils import (  # noqa: E402
+from Evaluation_VLM.Evaluation.utils.vllm_utils import (  # noqa: E402
     DEFAULT_MODEL_SELECTION,
     MODEL_CHOICES,
     ensure_clients,
@@ -46,15 +46,21 @@ login(token=os.environ["HF_TOKEN"])
 
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_MEDIA_DIR = "/opt/dataset/test_dataset"
-DEFAULT_OUTPUT_DIR = BASE_DIR / "results_road"
+DEFAULT_TASK = "road"
+TASK_PROMPTS = {
+    "road": BASE_DIR / "prompts" / "prompt_road.txt",
+    "person": BASE_DIR / "prompts" / "prompt_person.txt",
+    "ambient": BASE_DIR / "prompts" / "prompt_ambient.txt",
+    "industry": BASE_DIR / "prompts" / "prompt_industry.txt",
+}
 
 # ----------------------------
 # Prompt A: Perception-only JSON
 # ----------------------------
 
-PROMPT_PERCEPTION_JSON = (BASE_DIR / "prompts" / "prompt_road.txt").read_text(
-    encoding="utf-8"
-).strip()
+PROMPT_TEXTS = {
+    task: path.read_text(encoding="utf-8").strip() for task, path in TASK_PROMPTS.items()
+}
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
 
@@ -67,8 +73,14 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Perception->Deterministic risk pipeline with vLLM-served VLMs (video-only)."
     )
+    parser.add_argument(
+        "--task",
+        choices=sorted(TASK_PROMPTS.keys()),
+        default=DEFAULT_TASK,
+        help="Selects the prompt and default output folder.",
+    )
     parser.add_argument("--media-dir", type=Path, default=DEFAULT_MEDIA_DIR)
-    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--samples", type=int, default=None)
     parser.add_argument(
@@ -87,6 +99,9 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     args = parser.parse_args()
+    if args.output_dir is None:
+        args.output_dir = BASE_DIR / f"results_{args.task}"
+    args.prompt_text = PROMPT_TEXTS[args.task]
     if not args.model:
         args.model = [DEFAULT_MODEL_SELECTION]
     if "all" in args.model:
@@ -130,10 +145,11 @@ def _infer_one(
     media_dir: Path,
     output_dir: Path,
     model_key: str,
+    prompt_text: str,
 ) -> Tuple[Path, Dict[str, Any]]:
     photo_id = media_path.relative_to(media_dir).as_posix()
 
-    stage1 = client.run_video_inference_json(media_path, PROMPT_PERCEPTION_JSON)
+    stage1 = client.run_video_inference_json(media_path, prompt_text)
 
     if stage1 is None or not getattr(stage1, "response_text", None):
         output_obj: Dict[str, Any] = {
@@ -207,7 +223,14 @@ def process_questions(args: argparse.Namespace) -> None:
                         continue
                     logging.info("Processing media=%s with model=%s", photo_id, model_key)
 
-                    out_path, output_obj = _infer_one(client, media_path, media_dir, output_dir, model_key)
+                    out_path, output_obj = _infer_one(
+                        client,
+                        media_path,
+                        media_dir,
+                        output_dir,
+                        model_key,
+                        args.prompt_text,
+                    )
                     out_path.write_text(
                         json.dumps(output_obj, ensure_ascii=False, indent=2),
                         encoding="utf-8",
@@ -231,7 +254,15 @@ def process_questions(args: argparse.Namespace) -> None:
 
                 with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
                     future_to_media = {
-                        ex.submit(_infer_one, client, media_path, media_dir, output_dir, model_key): media_path
+                        ex.submit(
+                            _infer_one,
+                            client,
+                            media_path,
+                            media_dir,
+                            output_dir,
+                            model_key,
+                            args.prompt_text,
+                        ): media_path
                         for media_path in pending_media
                     }
 

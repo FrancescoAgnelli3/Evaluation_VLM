@@ -25,7 +25,7 @@ os.environ.setdefault("TORCH_HOME", "/mnt/ssd1/torch")
 
 from huggingface_hub import login  # noqa: E402
 
-from vllm_utils import (  # noqa: E402
+from Evaluation_VLM.Evaluation.utils.vllm_utils import (  # noqa: E402
     ensure_clients,
     shutdown_client,
     shutdown_vllm_server,

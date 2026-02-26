@@ -87,15 +87,6 @@ OUTPUT SCHEMA
         "intermittent": "<boolean>"
         }
     },
-    "safety_events": [
-        {
-        "event_type": "fall_hazard | equipment_motion | fire_or_smoke | obstruction | electrical | storage | other",
-        "description": "<string>",
-        "severity": "low | medium | high | extreme",
-        "confidence": "<number>",
-        "intermittent": "<boolean>"
-        }
-        ],
     "risk_summary": {
         "overall_risk_rating": {
             "value": "low | moderate | high | critical",
