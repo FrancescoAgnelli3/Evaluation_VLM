@@ -33,7 +33,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from huggingface_hub import login  # noqa: E402
 
-from Evaluation_VLM.Evaluation.utils.vllm_utils import (  # noqa: E402
+from utils.vllm_utils import (  # noqa: E402
     DEFAULT_MODEL_SELECTION,
     MODEL_CHOICES,
     ensure_clients,

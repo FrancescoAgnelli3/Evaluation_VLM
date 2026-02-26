@@ -432,6 +432,11 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--out", type=Path, default=BASE_DIR / "eval_out_urban")
     ap.add_argument("--limit-videos", type=int, default=None)
     ap.add_argument("--model", action="append", default=None, help="Evaluate only specified model name(s). Can be repeated.")
+    ap.add_argument(
+        "--skip-missing-students",
+        action="store_true",
+        help="Skip gold videos with zero matching student outputs.",
+    )
     ap.add_argument("--verbose", action=argparse.BooleanOptionalAction, default=True)
     return ap
 
@@ -467,6 +472,9 @@ def run(args: argparse.Namespace) -> None:
             allowed = {m.replace("-", "_") for m in args.model}
             if "all" not in allowed:
                 student_files = [(m, p) for (m, p) in student_files if m.replace("-", "_") in allowed]
+
+        if args.skip_missing_students and not student_files:
+            continue
 
         log(f"Video={video_id}: found {len(student_files)} student outputs")
 

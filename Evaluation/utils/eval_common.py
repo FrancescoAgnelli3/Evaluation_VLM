@@ -116,9 +116,9 @@ def discover_teacher_runs(results_gold: Path, video_id: str) -> List[Path]:
 def discover_student_files(results: Path, video_id: str) -> List[Tuple[str, Path]]:
     suffixes = ["_json_answer.json", "_integrated.json", ".json"]
     files: List[Tuple[str, Path]] = []
-    vid_re = re.compile(rf"(?:^|_){re.escape(video_id)}_(.+)$")
+    vid_re = re.compile(rf"(?:^|_)(?:question_)?{re.escape(video_id)}_(.+)$")
 
-    for p in results.iterdir():
+    for p in results.rglob("*"):
         if not p.is_file():
             continue
         name = p.name
