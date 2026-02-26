@@ -2,7 +2,7 @@
 import argparse
 from pathlib import Path
 
-from eval import read_json, validate_struct
+from Evaluation_VLM.Evaluation.eval_road import read_json, validate_struct
 
 
 def main() -> None:
