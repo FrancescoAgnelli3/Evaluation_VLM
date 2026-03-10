@@ -8,6 +8,8 @@ import shlex
 import signal
 import socket
 import subprocess
+import tempfile
+import threading
 import time
 from collections import OrderedDict
 from pathlib import Path
@@ -15,6 +17,13 @@ from typing import Dict, List, NamedTuple, Optional, Union
 
 import requests
 from openai import OpenAI
+
+from .models_utils import (
+    DEFAULT_MODEL_SELECTION,
+    MODEL_CHOICES,
+    resolve_model_repo,
+    served_name_for,
+)
 
 VLLM_HOST = os.environ.get("VLLM_HOST", "127.0.0.1")
 VLLM_PORT = int(os.environ.get("VLLM_PORT", "0"))
@@ -31,85 +40,14 @@ DEFAULT_TIMEOUT = float(os.environ.get("VLLM_TIMEOUT", "3600"))
 DEFAULT_MAX_NEW_TOKENS = int(os.environ.get("MAX_NEW_TOKENS", "4096"))
 
 VIDEO_USE_DATA_URL = os.environ.get("VIDEO_USE_DATA_URL", "1").strip() not in ("0", "false", "False")
-
-
-# ----------------------------
-# Model identifiers (HF repos only)
-# ----------------------------
-
-QWEN_32B_REPO = os.environ.get("QWEN_32B_REPO", "Qwen/Qwen3-VL-32B-Thinking")
-QWEN_8B_REPO = os.environ.get("QWEN_8B_REPO", "Qwen/Qwen3-VL-8B-Thinking")
-QWEN_2B_REPO = os.environ.get("QWEN_2B_REPO", "Qwen/Qwen3-VL-2B-Thinking")
-QWEN_8B_FT_VISION_REPO = os.environ.get("QWEN_8B_FT_VISION_REPO","/mnt/Repo/VLM_ft/models/Qwen3-8B-FT-vision")
-QWEN_8B_FT_LLM_REPO = os.environ.get("QWEN_8B_FT_LLM_REPO","/mnt/Repo/VLM_ft/models/Qwen3-8B-FT-llm")
-QWEN_8B_FT_LLM_1K_REPO = os.environ.get("QWEN_8B_FT_LLM_1K_REPO","/mnt/Repo/VLM_ft/models/Qwen3-8B-FT-llm_1k")
-QWEN_8B_FT_BOTH_REPO = os.environ.get("QWEN_8B_FT_BOTH_REPO","/mnt/Repo/VLM_ft/models/Qwen3-8B-FT-both")
-QWEN_8B_FT_BOTH_1K_REPO = os.environ.get("QWEN_8B_FT_BOTH_1K_REPO","/mnt/Repo/VLM_ft/models/Qwen3-8B-FT-both_1k")
-QWEN_32B_FT_LLM_REPO = os.environ.get("QWEN_32B_FT_LLM_REPO","/mnt/Repo/VLM_ft/models/Qwen3-32B_llm")
-QWEN_32B_FT_BOTH_REPO = os.environ.get("QWEN_32B_FT_BOTH_REPO","/mnt/Repo/VLM_ft/models/Qwen3-32B_both")
-QWEN_32B_FT_LLM_1K_REPO = os.environ.get("QWEN_32B_FT_LLM_1K_REPO","/mnt/Repo/VLM_ft/models/Qwen3-32B_llm_1k")
-QWEN_32B_FT_BOTH_1K_REPO = os.environ.get("QWEN_32B_FT_BOTH_1K_REPO","/mnt/Repo/VLM_ft/models/Qwen3-32B_both_1k")
-
-COSMOS_REASON1_REPO = os.environ.get("COSMOS_REASON1_REPO", "nvidia/Cosmos-Reason1-7B")
-COSMOS_REASON2_2B_REPO = os.environ.get("COSMOS_REASON2_2B_REPO", "nvidia/Cosmos-Reason2-2B")
-COSMOS_REASON2_8B_REPO = os.environ.get("COSMOS_REASON2_8B_REPO", "nvidia/Cosmos-Reason2-8B")
-COSMOS_REASON2_LORAFT_2B_13K_REPO = os.environ.get("COSMOS_REASON2_LORAFT_2B_13K_REPO","/opt/models/Cosmos-Reason2-FT/2B/dataset_13k/LoRA/merged")
-COSMOS_REASON2_LORAFT_8B_13K_REPO = os.environ.get("COSMOS_REASON2_LORAFT_8B_13K_REPO","/opt/models/Cosmos-Reason2-FT/8B/dataset_13k/LoRA/merged")
-COSMOS_REASON2_FULLFT_2B_13K_REPO = os.environ.get("COSMOS_REASON2_FULLFT_2B_13K_REPO","/opt/models/Cosmos-Reason2-FT/2B/full_FT/dataset_13k/safetensors/step_780/",)
-COSMOS_REASON2_FULLFT_8B_13K_REPO = os.environ.get("COSMOS_REASON2_FULLFT_8B_13K_REPO","/opt/models/Cosmos-Reason2-FT/8B/full_FT/dataset_13k/safetensors/step_780/")
-COSMOS_REASON2_FULLFT_2B_10K_REPO = os.environ.get(
-    "COSMOS_REASON2_FULLFT_2B_10K_REPO",
-    "/opt/models/Cosmos-Reason2-FT/2B/full_FT/dataset_10k/safetensors/step_745",
-)
-COSMOS_REASON2_FULLFT_2B_5K_REPO = os.environ.get(
-    "COSMOS_REASON2_FULLFT_2B_5K_REPO",
-    "/opt/models/Cosmos-Reason2-FT/2B/full_FT/dataset_5k/safetensors/step_390",
-)
-COSMOS_REASON2_FULLFT_2B_2K_REPO = os.environ.get(
-    "COSMOS_REASON2_FULLFT_2B_2K_REPO",
-    "/opt/models/Cosmos-Reason2-FT/2B/full_FT/dataset_2k/safetensors/step_155",
-)
-COSMOS_REASON2_FULLFT_8B_17K_REPO = os.environ.get(
-    "COSMOS_REASON2_FULLFT_8B_17K_REPO",
-    "/opt/models/Cosmos-Reason2-FT/8B/full_FT/dataset_17k/safetensors/step_975",
-)
-COSMOS_REASON2_LORAFT_2B_17K_REPO = os.environ.get(
-    "COSMOS_REASON2_LORAFT_2B_17K_REPO",
-    "/opt/models/Cosmos-Reason2-FT/2B/LoRA/dataset_17k/merged",
-)
-COSMOS_REASON2_LORAFT_8B_17K_REPO = os.environ.get(
-    "COSMOS_REASON2_LORAFT_8B_17K_REPO",
-    "/opt/models/Cosmos-Reason2-FT/8B/LoRA/dataset_17k/merged",
+VIDEO_URL_PREFIX = os.environ.get("VIDEO_URL_PREFIX")
+VIDEO_URL_ROOT = os.environ.get("VIDEO_URL_ROOT")
+VIDEO_TARGET_BITRATE_MBPS = float(os.environ.get("VIDEO_TARGET_BITRATE_MBPS", "40"))
+VIDEO_REENCODE_CACHE_DIR = os.environ.get(
+    "VIDEO_REENCODE_CACHE_DIR",
+    str(Path(tempfile.gettempdir()) / "vlm_reencoded"),
 )
 
-MODEL_CHOICES = (
-    "qwen-8B",
-    # "qwen-32B-FT-llm",
-    # "qwen-32B-FT-both",
-    "qwen-32B",
-    # "qwen-32B-FT-both-1k",
-    # "qwen-32B-FT-llm-1k",
-    # "qwen-8B-FT-llm",
-    # "qwen-8B-FT-llm-1k",
-    # "qwen-8B-FT-both",
-    # "qwen-8B-FT-both-1k",
-    "cosmos2-2B",
-    "cosmos2-8B",
-    # "cosmos2-reason-LoRAFT_13k-2B",
-    # "cosmos2-reason-LoRAFT_13k-8B",
-    # "cosmos2-reason-fullFT_13k-2B",
-    # "cosmos2-reason-fullFT_13k-8B",
-    # "cosmos2-reason-fullFT_10k-2B",
-    # "cosmos2-reason-fullFT_5k-2B",
-    # "cosmos2-reason-fullFT_2k-2B",
-    "cosmos2-reason-fullFT_17k-8B",
-    "cosmos2-reason-LoRAFT_17k-2B",
-    "cosmos2-reason-LoRAFT_17k-8B",
-    "cosmos1",
-    "qwen-2B",
-    "all",
-)
-DEFAULT_MODEL_SELECTION = os.environ.get("DEFAULT_MODEL", "cosmos2-2B")
 
 JSON_MODE_RESPONSE_FORMAT: Dict[str, object] = {"type": "json_object"}
 
@@ -295,115 +233,7 @@ def _build_vllm_env(cuda_visible_devices: Optional[str] = None) -> Dict[str, str
     return env
 
 
-def _served_name_for(model_key: str) -> str:
-    if model_key == "qwen-32B":
-        return os.environ.get("QWEN_VLLM_MODEL_NAME_32B", "Qwen3-VL-32B-Thinking")
-    if model_key == "qwen-8B":
-        return os.environ.get("QWEN_VLLM_MODEL_NAME_8B", "Qwen3-VL-8B-Thinking")
-    if model_key == "qwen-2B":
-        return os.environ.get("QWEN_VLLM_MODEL_NAME_2B", "Qwen3-VL-2B-Thinking")
-    if model_key == "qwen-8B-FT-vision":
-        return os.environ.get("QWEN_VLLM_MODEL_NAME_8B_FT_VISION", "Qwen3-8B-FT-Vision")
-    if model_key == "qwen-8B-FT-llm":
-        return os.environ.get("QWEN_VLLM_MODEL_NAME_8B_FT_LLM", "Qwen3-8B-FT-LLM")
-    if model_key == "qwen-8B-FT-llm-1k":
-        return os.environ.get("QWEN_VLLM_MODEL_NAME_8B_FT_LLM_1K", "Qwen3-8B-FT-LLM-1k")
-    if model_key == "qwen-8B-FT-both":
-        return os.environ.get("QWEN_VLLM_MODEL_NAME_8B_FT_BOTH", "Qwen3-8B-FT-Both")
-    if model_key == "qwen-8B-FT-both-1k":
-        return os.environ.get("QWEN_VLLM_MODEL_NAME_8B_FT_BOTH_1K", "Qwen3-8B-FT-Both-1k")
-    if model_key == "qwen-32B-FT-llm":
-        return os.environ.get("QWEN_VLLM_MODEL_NAME_32B_FT_LLM", "Qwen3-32B-FT-LLM")
-    if model_key == "qwen-32B-FT-both":
-        return os.environ.get("QWEN_VLLM_MODEL_NAME_32B_FT_BOTH", "Qwen3-32B-FT-Both")
-    if model_key == "qwen-32B-FT-llm-1k":
-        return os.environ.get("QWEN_VLLM_MODEL_NAME_32B_FT_LLM_1K", "Qwen3-32B-FT-LLM-1k")
-    if model_key == "qwen-32B-FT-both-1k":
-        return os.environ.get("QWEN_VLLM_MODEL_NAME_32B_FT_BOTH_1K", "Qwen3-32B-FT-Both-1k")
-    if model_key == "cosmos1":
-        return "Cosmos-Reason1"
-    if model_key == "cosmos2-2B":
-        return "Cosmos-Reason2-2B"
-    if model_key == "cosmos2-8B":
-        return "Cosmos-Reason2-8B"
-    if model_key == "cosmos2-reason-LoRAFT_13k-2B":
-        return os.environ.get("COSMOS_REASON2_LORAFT_2B_13k_NAME", "Cosmos-Reason2-LoRAFT-13k_2B")
-    if model_key == "cosmos2-reason-LoRAFT_13k-8B":
-        return os.environ.get("COSMOS_REASON2_LORAFT_13k_NAME", "Cosmos-Reason2-LoRAFT-13k_8B")
-    if model_key == "cosmos2-reason-fullFT_13k-2B":
-        return os.environ.get("COSMOS_REASON2_FULLFT_13k_NAME", "Cosmos-Reason2-FullFT-13k_2B")
-    if model_key == "cosmos2-reason-fullFT_13k-8B":
-        return os.environ.get("COSMOS_REASON2_FULLFT_8B_13k_NAME", "Cosmos-Reason2-FullFT-13k_8B")
-    if model_key == "cosmos2-reason-fullFT_10k-2B":
-        return os.environ.get("COSMOS_REASON2_FULLFT_10k_NAME", "Cosmos-Reason2-FullFT-10k_2B")
-    if model_key == "cosmos2-reason-fullFT_5k-2B":
-        return os.environ.get("COSMOS_REASON2_FULLFT_5K_NAME", "Cosmos-Reason2-FullFT-5k_2B")
-    if model_key == "cosmos2-reason-fullFT_2k-2B":
-        return os.environ.get("COSMOS_REASON2_FULLFT_2K_NAME", "Cosmos-Reason2-FullFT-2k_2B")
-    if model_key == "cosmos2-reason-fullFT_17k-8B":
-        return os.environ.get("COSMOS_REASON2_FULLFT_8B_17k_NAME", "Cosmos-Reason2-FullFT-17k_8B")
-    if model_key == "cosmos2-reason-LoRAFT_17k-2B":
-        return os.environ.get("COSMOS_REASON2_LORAFT_2B_17k_NAME", "Cosmos-Reason2-LoRAFT-17k_2B")
-    if model_key == "cosmos2-reason-LoRAFT_17k-8B":
-        return os.environ.get("COSMOS_REASON2_LORAFT_8B_17k_NAME", "Cosmos-Reason2-LoRAFT-17k_8B")
-    raise ValueError(f"Unknown model_key: {model_key}")
-
-
-def _resolve_model_repo(model_key: str) -> str:
-    if model_key == "qwen-32B":
-        return QWEN_32B_REPO
-    if model_key == "qwen-8B":
-        return QWEN_8B_REPO
-    if model_key == "qwen-2B":
-        return QWEN_2B_REPO
-    if model_key == "qwen-8B-FT-vision":
-        return QWEN_8B_FT_VISION_REPO
-    if model_key == "qwen-8B-FT-llm":
-        return QWEN_8B_FT_LLM_REPO
-    if model_key == "qwen-8B-FT-llm-1k":
-        return QWEN_8B_FT_LLM_1K_REPO
-    if model_key == "qwen-8B-FT-both":
-        return QWEN_8B_FT_BOTH_REPO
-    if model_key == "qwen-8B-FT-both-1k":
-        return QWEN_8B_FT_BOTH_1K_REPO
-    if model_key == "qwen-32B-FT-llm":
-        return QWEN_32B_FT_LLM_REPO
-    if model_key == "qwen-32B-FT-both":
-        return QWEN_32B_FT_BOTH_REPO
-    if model_key == "qwen-32B-FT-llm-1k":
-        return QWEN_32B_FT_LLM_1K_REPO
-    if model_key == "qwen-32B-FT-both-1k":
-        return QWEN_32B_FT_BOTH_1K_REPO
-    if model_key == "cosmos1":
-        return COSMOS_REASON1_REPO
-    if model_key == "cosmos2-2B":
-        return COSMOS_REASON2_2B_REPO
-    if model_key == "cosmos2-8B":
-        return COSMOS_REASON2_8B_REPO
-    if model_key == "cosmos2-reason-LoRAFT_13k-2B":
-        return COSMOS_REASON2_LORAFT_2B_13K_REPO
-    if model_key == "cosmos2-reason-LoRAFT_13k-8B":
-        return COSMOS_REASON2_LORAFT_8B_13K_REPO
-    if model_key == "cosmos2-reason-fullFT_13k-2B":
-        return COSMOS_REASON2_FULLFT_2B_13K_REPO
-    if model_key == "cosmos2-reason-fullFT_13k-8B":
-        return COSMOS_REASON2_FULLFT_8B_13K_REPO
-    if model_key == "cosmos2-reason-fullFT_10k-2B":
-        return COSMOS_REASON2_FULLFT_2B_10K_REPO
-    if model_key == "cosmos2-reason-fullFT_5k-2B":
-        return COSMOS_REASON2_FULLFT_2B_5K_REPO
-    if model_key == "cosmos2-reason-fullFT_2k-2B":
-        return COSMOS_REASON2_FULLFT_2B_2K_REPO
-    if model_key == "cosmos2-reason-fullFT_17k-8B":
-        return COSMOS_REASON2_FULLFT_8B_17K_REPO
-    if model_key == "cosmos2-reason-LoRAFT_17k-2B":
-        return COSMOS_REASON2_LORAFT_2B_17K_REPO
-    if model_key == "cosmos2-reason-LoRAFT_17k-8B":
-        return COSMOS_REASON2_LORAFT_8B_17K_REPO
-    raise ValueError(f"Unknown model_key: {model_key}")
-
-
-def _ensure_vllm_server(model_key: str, cuda_visible_devices: Optional[str] = None) -> VLLMServerManager:
+def ensure_vllm_server(model_key: str, cuda_visible_devices: Optional[str] = None) -> VLLMServerManager:
     global _VLLM_SERVER_MANAGER
 
     requested_cuda_visible_devices = (
@@ -423,8 +253,8 @@ def _ensure_vllm_server(model_key: str, cuda_visible_devices: Optional[str] = No
     if _VLLM_SERVER_MANAGER is None:
         env = _build_vllm_env(cuda_visible_devices=cuda_visible_devices)
         port = _choose_vllm_port(VLLM_HOST)
-        model_repo = _resolve_model_repo(model_key)
-        served_model_name = _served_name_for(model_key)
+        model_repo = resolve_model_repo(model_key)
+        served_model_name = served_name_for(model_key)
         manager = VLLMServerManager(
             model_key=model_key,
             host=VLLM_HOST,
@@ -459,6 +289,93 @@ def _file_to_data_url(video_path: Path) -> str:
     data = video_path.read_bytes()
     b64 = base64.b64encode(data).decode("utf-8")
     return f"data:{mime};base64,{b64}"
+
+
+def _file_to_http_url(video_path: Path) -> str:
+    if not VIDEO_URL_PREFIX or not VIDEO_URL_ROOT:
+        raise RuntimeError(
+            "VIDEO_USE_DATA_URL=0 requires VIDEO_URL_PREFIX and VIDEO_URL_ROOT to be set."
+        )
+    root = Path(VIDEO_URL_ROOT).resolve()
+    try:
+        rel = video_path.resolve().relative_to(root)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Video path is outside VIDEO_URL_ROOT: {video_path} (root={root})"
+        ) from exc
+    rel_url = "/".join(rel.parts)
+    return f"{VIDEO_URL_PREFIX.rstrip('/')}/{rel_url}"
+
+
+def _probe_format_bitrate(video_path: Path) -> Optional[int]:
+    try:
+        out = subprocess.check_output(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=bit_rate",
+                "-of",
+                "default=nk=1:nw=1",
+                str(video_path),
+            ],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return None
+    try:
+        return int(out)
+    except Exception:
+        return None
+
+
+def _maybe_reencode_video(video_path: Path) -> Path:
+    if VIDEO_TARGET_BITRATE_MBPS <= 0:
+        return video_path
+
+    bitrate = _probe_format_bitrate(video_path)
+    if bitrate is None:
+        return video_path
+
+    target_bps = int(VIDEO_TARGET_BITRATE_MBPS * 1_000_000)
+    if bitrate <= target_bps:
+        return video_path
+
+    cache_dir = Path(VIDEO_REENCODE_CACHE_DIR)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    stat = video_path.stat()
+    cache_name = f"{video_path.stem}_br{VIDEO_TARGET_BITRATE_MBPS:.0f}M_{stat.st_size}_{int(stat.st_mtime)}.mp4"
+    out_path = cache_dir / cache_name
+    if out_path.exists():
+        return out_path
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(video_path),
+        "-c:v",
+        "libx264",
+        "-b:v",
+        f"{VIDEO_TARGET_BITRATE_MBPS:.0f}M",
+        "-maxrate",
+        f"{VIDEO_TARGET_BITRATE_MBPS:.0f}M",
+        "-bufsize",
+        f"{int(VIDEO_TARGET_BITRATE_MBPS * 2):.0f}M",
+        "-an",
+        "-movflags",
+        "+faststart",
+        str(out_path),
+    ]
+    try:
+        subprocess.check_call(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return out_path
+    except Exception as exc:
+        logging.warning("Re-encode failed for %s: %s", video_path, exc)
+        return video_path
 
 
 def _extract_first_json_object(text: str) -> Optional[str]:
@@ -498,23 +415,23 @@ class InferenceResult(NamedTuple):
 
 class VLLMClient:
     """
-    VLM client via OpenAI-compatible endpoint. The vLLM server is managed locally.
+    VLM client via OpenAI-compatible endpoint. Server lifecycle is managed externally.
     Video-only: uses `video_url` with a data URL (base64).
     """
 
     def __init__(
         self,
         model_key: str,
-        base_url: Optional[str] = None,
+        model_name: str,
+        base_url: str,
         timeout: float = DEFAULT_TIMEOUT,
-        cuda_visible_devices: Optional[str] = None,
+        api_key: Optional[str] = None,
     ) -> None:
         self.model_key = model_key
-        manager = _ensure_vllm_server(model_key, cuda_visible_devices=cuda_visible_devices)
-        self.model_name = manager.served_model_name
-        api_key = os.environ.get("OPENAI_API_KEY", "EMPTY")
-        resolved_base_url = base_url.rstrip("/") if base_url else f"http://{manager.host}:{manager.port}/v1"
-        self.client = OpenAI(api_key=api_key, base_url=resolved_base_url, timeout=timeout)
+        self.model_name = model_name
+        resolved_base_url = base_url.rstrip("/")
+        resolved_api_key = api_key or os.environ.get("OPENAI_API_KEY", "EMPTY")
+        self.client = OpenAI(api_key=resolved_api_key, base_url=resolved_base_url, timeout=timeout)
         logging.info("[Client] Using vLLM at %s with model='%s' (key=%s)", resolved_base_url, self.model_name, model_key)
 
     def _request(
@@ -525,10 +442,11 @@ class VLLMClient:
         force_json_mode: bool,
         extra_system: Optional[str] = None,
     ) -> Optional[InferenceResult]:
+        safe_path = _maybe_reencode_video(video_path)
         if VIDEO_USE_DATA_URL:
-            video_ref = _file_to_data_url(video_path)
+            video_ref = _file_to_data_url(safe_path)
         else:
-            raise RuntimeError("VIDEO_USE_DATA_URL=0 requires providing an HTTP URL mapping for the video.")
+            video_ref = _file_to_http_url(safe_path)
 
         start = time.time()
 
@@ -622,6 +540,65 @@ class VLLMClient:
         pass
 
 
+class VLLMClientFactory:
+    """
+    Lightweight per-thread HTTP client factory.
+    Assumes the vLLM server is already running.
+    """
+
+    def __init__(
+        self,
+        model_key: str,
+        model_name: str,
+        base_url: str,
+        timeout: float = DEFAULT_TIMEOUT,
+        api_key: Optional[str] = None,
+    ) -> None:
+        self.model_key = model_key
+        self.model_name = model_name
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+        self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "EMPTY")
+        self._local = threading.local()
+
+    @classmethod
+    def from_server(
+        cls,
+        manager: VLLMServerManager,
+        model_key: str,
+        base_url: Optional[str] = None,
+        timeout: float = DEFAULT_TIMEOUT,
+        api_key: Optional[str] = None,
+    ) -> "VLLMClientFactory":
+        resolved_base_url = base_url.rstrip("/") if base_url else f"http://{manager.host}:{manager.port}/v1"
+        return cls(
+            model_key=model_key,
+            model_name=manager.served_model_name,
+            base_url=resolved_base_url,
+            timeout=timeout,
+            api_key=api_key,
+        )
+
+    def get_client(self) -> VLLMClient:
+        client = getattr(self._local, "client", None)
+        if client is None:
+            client = VLLMClient(
+                model_key=self.model_key,
+                model_name=self.model_name,
+                base_url=self.base_url,
+                timeout=self.timeout,
+                api_key=self.api_key,
+            )
+            self._local.client = client
+        return client
+
+    def close(self) -> None:
+        client = getattr(self._local, "client", None)
+        if client is not None:
+            client.close()
+            self._local.client = None
+
+
 VLMClientType = Union[VLLMClient]
 
 
@@ -642,9 +619,12 @@ def ensure_clients(
         if model_key in clients:
             continue
         try:
+            manager = ensure_vllm_server(model_key, cuda_visible_devices=cuda_visible_devices)
+            base_url = f"http://{manager.host}:{manager.port}/v1"
             clients[model_key] = VLLMClient(
                 model_key=model_key,
-                cuda_visible_devices=cuda_visible_devices,
+                model_name=manager.served_model_name,
+                base_url=base_url,
             )
         except Exception as exc:
             logging.error("Unable to initialize %s: %s", model_key, exc)

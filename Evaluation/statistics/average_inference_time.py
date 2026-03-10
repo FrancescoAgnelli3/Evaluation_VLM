@@ -26,8 +26,8 @@ os.environ.setdefault("TORCH_HOME", "/mnt/ssd1/torch")
 from huggingface_hub import login  # noqa: E402
 
 from Evaluation_VLM.Evaluation.utils.vllm_utils import (  # noqa: E402
-    ensure_clients,
-    shutdown_client,
+    VLLMClientFactory,
+    ensure_vllm_server,
     shutdown_vllm_server,
 )
 
@@ -93,11 +93,9 @@ def process(args: argparse.Namespace) -> None:
 
     try:
         for model_key in args.model:
-            model_clients = ensure_clients([model_key])
-            client = model_clients.get(model_key)
-            if client is None:
-                results[model_key] = (None, 0, len(media_paths), "init_failed")
-                continue
+            manager = ensure_vllm_server(model_key)
+            client_factory = VLLMClientFactory.from_server(manager, model_key)
+            client = client_factory.get_client()
 
             elapsed_values: List[float] = []
             processed = 0
@@ -116,8 +114,8 @@ def process(args: argparse.Namespace) -> None:
             avg_s = _avg(elapsed_values)
             results[model_key] = (avg_s, len(elapsed_values), total_target, None)
 
-            shutdown_client(client)
-            del client
+            client_factory.close()
+            del client_factory
 
             # One-server-at-a-time: stop between models to avoid port collisions and ensure correct model loaded.
             shutdown_vllm_server()

@@ -75,7 +75,8 @@ from utils.eval_common import (
 )
 
 BASE_DIR = Path(__file__).resolve().parents[1]
-GT_DIR = "/opt/dataset/test_dataset_json"
+TASK_NAME = "people"
+GT_DIR = f"/opt/dataset/ds_{TASK_NAME}/test_dataset_json"
 
 
 # ----------------------------
@@ -339,6 +340,16 @@ def score_events(student: Dict[str, Any], teacher: Dict[str, Any]) -> EventScore
 
     s_types = set(s_map.keys())
     t_types = set(t_map.keys())
+
+    if not t_types:
+        return EventScores(
+            macro_acc=float("nan"),
+            presence_f1=float("nan"),
+            count_acc=float("nan"),
+            persons_count_acc=float("nan"),
+            span_acc=float("nan"),
+            hits=[],
+        )
 
     presence_f1 = _set_f1(s_types, t_types)
 
@@ -653,7 +664,8 @@ def _sym_events_acc(a: Dict[str, Any], b: Dict[str, Any]) -> float:
 def _consensus_pair_score(a: Dict[str, Any], b: Dict[str, Any]) -> float:
     gpair = _sym_global_slot_acc(a, b)
     epair = _sym_events_acc(a, b)
-    return 0.5 * gpair + 0.5 * epair
+    vals = [v for v in (gpair, epair) if not np.isnan(v)]
+    return float(np.mean(vals)) if vals else 0.0
 
 
 # ----------------------------
@@ -663,8 +675,8 @@ def _consensus_pair_score(a: Dict[str, Any], b: Dict[str, Any]) -> float:
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     ap.add_argument("--results-gold", type=Path, default=GT_DIR)
-    ap.add_argument("--results", type=Path, default=BASE_DIR / "results_person")
-    ap.add_argument("--out", type=Path, default=BASE_DIR / "eval_out_person")
+    ap.add_argument("--results", type=Path, default=BASE_DIR / "results_people")
+    ap.add_argument("--out", type=Path, default=BASE_DIR / "eval_out_people")
     ap.add_argument("--limit-videos", type=int, default=None)
     ap.add_argument("--model", action="append", default=None, help="Evaluate only specified model name(s). Can be repeated.")
     ap.add_argument(
@@ -744,7 +756,7 @@ def run(args: argparse.Namespace) -> None:
             events_persons_count_acc = None
             events_span_acc = None
 
-            if student is not None:
+            if vrep.parse_ok and "error" not in student:
                 sec, _hits = score_global_and_sections(student, teacher)
                 global_slot = sec.global_macro_acc
                 scene_slot = sec.scene_context_macro_acc
@@ -765,6 +777,7 @@ def run(args: argparse.Namespace) -> None:
                     "video": video_id,
                     "model": model_name,
                     "parse_ok": vrep.parse_ok,
+                    "has_error": ("error" in student) if isinstance(student, dict) else False,
                     "schema_ok": vrep.schema_ok,
                     "rule_ok": vrep.rule_ok,
                     "global_slot_macro_acc": global_slot,
@@ -810,12 +823,13 @@ def run(args: argparse.Namespace) -> None:
                 x = pd.to_numeric(g2[col], errors="coerce")
                 return float(x.mean()) if x.notna().any() else float("nan")
 
-            parse_rate = float(g2["parse_ok"].mean())
+            parse_rate = float((g2["parse_ok"] & ~g2["has_error"]).mean())
             schema_rate = float(g2["schema_ok"].mean())
             rule_rate = float(g2["rule_ok"].mean())
 
             global_mean = mean_or_nan("global_slot_macro_acc")
             events_mean = mean_or_nan("events_macro_acc")
+            effective_global = float(global_mean * schema_rate) if not np.isnan(global_mean) else float("nan")
 
             weighted_global = float("nan")
             weighted_events = float("nan")
@@ -831,6 +845,7 @@ def run(args: argparse.Namespace) -> None:
                     "schema_rate": schema_rate,
                     "rule_rate": rule_rate,
                     "global_slot_macro_acc_mean": global_mean,
+                    "effective_global_slot_macro_acc_mean": effective_global,
                     "scene_context_slot_macro_acc_mean": mean_or_nan("scene_context_slot_macro_acc"),
                     "crowd_and_flow_slot_macro_acc_mean": mean_or_nan("crowd_and_flow_slot_macro_acc"),
                     "observable_interactions_slot_macro_acc_mean": mean_or_nan("observable_interactions_slot_macro_acc"),

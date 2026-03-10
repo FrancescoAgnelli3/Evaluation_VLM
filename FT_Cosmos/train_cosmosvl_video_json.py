@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 
 VIDEO_DIR = "/opt/dataset/train_dataset_17k"
 JSON_DIR = "/opt/dataset/train_dataset_17k_json"
-PROMPT_DIR = BASE_DIR / "prompts/prompt_json.txt"
+PROMPT_DIR = BASE_DIR / "prompts/prompt_road.txt"
 OUTPUT_DIR = "/opt/models/Cosmos-Reason2-FT/2B/LoRA/dataset_17k/adapter/"
 
 # Compat shim: some torch builds expose torch.compiler without is_compiling
@@ -313,17 +313,21 @@ class DataCollatorQwenVL:
         attention_mask = [_to_tensor(f["attention_mask"], torch.long) for f in features]
         labels = [_to_tensor(f["labels"], torch.long) for f in features]
 
-        batch = self.processor.tokenizer.pad(
-            {"input_ids": input_ids, "attention_mask": attention_mask},
-            padding=True,
-            return_tensors="pt",
-        )
+        pad_id = self.processor.tokenizer.pad_token_id
+        if pad_id is None:
+            raise ValueError("Tokenizer pad_token_id is None; set it before training.")
 
-        max_len = batch["input_ids"].shape[1]
-        padded_labels = torch.full((len(labels), max_len), -100, dtype=torch.long)
-        for i, lab in enumerate(labels):
-            padded_labels[i, : lab.shape[0]] = lab
-        batch["labels"] = padded_labels
+        batch = {
+            "input_ids": torch.nn.utils.rnn.pad_sequence(
+                input_ids, batch_first=True, padding_value=pad_id
+            ),
+            "attention_mask": torch.nn.utils.rnn.pad_sequence(
+                attention_mask, batch_first=True, padding_value=0
+            ),
+            "labels": torch.nn.utils.rnn.pad_sequence(
+                labels, batch_first=True, padding_value=-100
+            ),
+        }
 
         reserved = {"input_ids", "attention_mask", "labels"}
         other_keys = [k for k in features[0].keys() if k not in reserved]
@@ -373,6 +377,12 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--video_dir", type=str, default=VIDEO_DIR)
     ap.add_argument("--json_dir", type=str, default=JSON_DIR)
     ap.add_argument("--prompt_path", type=str, default=str(PROMPT_DIR))
+    ap.add_argument(
+        "--task",
+        type=str,
+        choices=["road", "environment", "people", "industry"],
+        help="Selects a built-in prompt file (overrides --prompt_path).",
+    )
     ap.add_argument("--output_dir", type=str, default=OUTPUT_DIR)
 
     ap.add_argument("--use_qlora", action="store_true")
@@ -381,7 +391,7 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--lora_dropout", type=float, default=0.05)
 
     ap.add_argument("--num_frames", type=int, default=10)
-    ap.add_argument("--max_prompt_tokens", type=int, default=2048 * 4)
+    ap.add_argument("--max_prompt_tokens", type=int, default=2048 * 8)
     ap.add_argument("--max_label_tokens", type=int, default=512)
 
     ap.add_argument("--per_device_train_batch_size", type=int, default=1)
@@ -391,7 +401,7 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--warmup_ratio", type=float, default=0.03)
     ap.add_argument("--weight_decay", type=float, default=0.0)
 
-    ap.add_argument("--save_steps", type=int, default=200)
+    ap.add_argument("--save_steps", type=int, default=2000)
     ap.add_argument("--save_total_limit", type=int, default=2)
 
     ap.add_argument("--bf16", action="store_true", default=True)
@@ -454,7 +464,12 @@ def main(argv: Optional[List[str]] = None) -> None:
     print("RANK", os.environ.get("RANK"), "LOCAL_RANK", os.environ.get("LOCAL_RANK"),
           "WORLD_SIZE", os.environ.get("WORLD_SIZE"), "dist_init", dist.is_initialized())
 
-    prompt = _read_prompt(args.prompt_path)
+    prompt_path = args.prompt_path
+    if args.task:
+        prompt_path = str(BASE_DIR / f"prompts/prompt_{args.task}.txt")
+    if not Path(prompt_path).exists():
+        raise FileNotFoundError(f"Prompt file not found: {prompt_path}")
+    prompt = _read_prompt(prompt_path)
     examples = _collect_examples(args.video_dir, args.json_dir)
 
     processor = AutoProcessor.from_pretrained(args.model_id)
@@ -479,7 +494,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         torch_dtype = torch.bfloat16 if args.bf16 else torch.float16
         model = Qwen3VLForConditionalGeneration.from_pretrained(
             args.model_id,
-            torch_dtype=torch_dtype,
+            dtype=torch_dtype,
             attn_implementation=args.attn_impl,
         )
         model.to(device)
@@ -494,6 +509,8 @@ def main(argv: Optional[List[str]] = None) -> None:
     model.generation_config.pad_token_id = tok.pad_token_id
     model.config.eos_token_id = tok.eos_token_id
     model.generation_config.eos_token_id = tok.eos_token_id
+    model.config.bos_token_id = tok.bos_token_id
+    model.generation_config.bos_token_id = tok.bos_token_id
 
     vocab = model.get_input_embeddings().weight.shape[0]
     assert tok.pad_token_id < vocab and tok.eos_token_id < vocab

@@ -7,12 +7,12 @@ import argparse
 import sys
 from typing import Dict, List, Optional
 
-from utils import eval_ambient, eval_industry, eval_person, eval_road
+from utils import eval_industry, eval_people, eval_road, eval_enviroment
 
 TASK_MODULES: Dict[str, object] = {
     "road": eval_road,
-    "person": eval_person,
-    "ambient": eval_ambient,
+    "people": eval_people,
+    "environment": eval_enviroment,
     "industry": eval_industry,
 }
 DEFAULT_TASK = "road"

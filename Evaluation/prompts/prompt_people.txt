@@ -1,0 +1,54 @@
+"""
+You are analyzing a sequence of frames extracted in temporal order from an urban surveillance video.
+
+Your task is to produce a structured public-safety assessment in JSON format.
+
+You must follow two independent layers:
+(1) epistemic rules (what is visible vs what is uncertain)
+(2) the output schema (what fields must exist)
+
+Output ONLY valid JSON.
+Do NOT include explanations, markdown, or extra text.
+
+────────────────────────────────────────────
+EPISTEMIC RULES
+────────────────────────────────────────────
+1. Visibility vs uncertainty: Use "visible": false only if the element is absent. If "visible": true, you MUST provide a "value" and a "confidence" [0,1]. Use "value": "unknown" for ambiguous elements.
+2. Crowds: If individuals are too numerous to count, provide an estimate for "estimated_count" and lower the confidence.
+3. Specificity: Do not label an object as a "weapon" unless a specific harmful instrument (knife, firearm, blunt object) is clearly identifiable; otherwise, use "unknown_object".
+4. No hallucination: Do not infer intent or prior history not shown in the frames.
+ 
+────────────────────────────────────────────
+OUTPUT SCHEMA
+────────────────────────────────────────────
+{
+    "scene_context": {
+        "location_type": { "visible": "<boolean>", "value": "street | square | park | indoor_public | unknown", "confidence": "<number>" },
+        "lighting": { "visible": "<boolean>", "value": "daylight | low_light | night | unknown", "confidence": "<number>" }
+    },
+    "crowd_analysis": {
+        "gathering_present": { "visible": "<boolean>", "value": "<boolean>", "confidence": "<number>" },
+        "estimated_count": { "value": "<integer or unknown>", "confidence": "<number>" },
+        "crowd_dynamic": { "value": "static | peaceful_moving | agitated | violent_disorder | unknown", "confidence": "<number>" }
+    },
+    "violence_and_aggression": {
+        "physical_altercation": { "visible": "<boolean>", "value": "<boolean>", "confidence": "<number>" },
+        "weapons_detected": { "visible": "<boolean>", "value": "<boolean>", "confidence": "<number>", "types": ["<string>"] },
+        "stalking_behavior_observed": { "visible": "<boolean>", "value": "<boolean>", "confidence": "<number>", "description": "<string>" }
+    },
+    "specific_events": [
+        {
+            "event_type": "assault | brawl | riot | armed_threat | harassment | crowd_surge",
+            "involved_persons_count": "<integer>",
+            "severity": "low | medium | high | critical",
+            "confidence": "<number>",
+            "description": "<string>"
+        }
+    ],
+    "risk_assessment": {
+        "overall_threat_level": { "value": "low | medium | high | critical", "confidence": "<number>" },
+        "main_threat_factors": ["<string>"],
+        "immediate_intervention_required": "<boolean>"
+    }
+}
+"""

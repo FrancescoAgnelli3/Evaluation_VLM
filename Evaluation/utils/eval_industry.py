@@ -1,45 +1,45 @@
 #!/usr/bin/env python3
 """
-Evaluator for the SITE-SAFETY HAZARD ASSESSMENT JSON schema.
+Evaluator for the INDUSTRIAL-SAFETY ASSESSMENT JSON schema.
 
-This adapts the previous road-safety evaluator to the new prompt/schema:
-
+Schema (prompt-driven):
 Top-level keys:
-  - context
-  - hazard_conditions
-  - safety_events
-  - risk_summary
+  - site_characterization
+  - personnel_safety
+  - hazardous_conditions
+  - safety_violations
+  - overall_site_risk
 
 Scoring:
-  - "global_slot_macro_acc" is a true macro over *all scorable leaves* across:
-      context + hazard_conditions + safety_events
-    (risk_summary has separate metrics and is kept separate, like Risk Assessment before.)
+  - global_slot_macro_acc is a true macro over *all scorable leaves* across:
+      site_characterization + personnel_safety + hazardous_conditions + safety_violations
+    (overall_site_risk is scored separately, like previous "risk_summary".)
 
   - Per-section macro metrics:
-      context_slot_macro_acc
-      hazard_conditions_slot_macro_acc
-      safety_events_macro_acc
+      site_characterization_slot_macro_acc
+      personnel_safety_slot_macro_acc
+      hazardous_conditions_slot_macro_acc
+      safety_violations_macro_acc
       global_slot_macro_acc
 
-  - risk_summary metrics:
-      risk_summary_macro_acc (visible/value not used here; this section has no "visible" fields)
-      overall_risk_rating_acc
-      primary_hazard_factors_f1
-      recommended_controls_f1
+  - overall_site_risk metrics (separate):
+      overall_site_risk_macro_acc
+      risk_rating_acc
+      primary_risk_factors_f1
 
-Validation:
-  - best-effort parse_ok / schema_ok / rule_ok
+Validation (best-effort):
+  - parse_ok / schema_ok / rule_ok
   - light rules:
-      * if a field has visible==False, we do not require value to be any particular token
-        (because the schema does not constrain it beyond being present).
-      * if visible==True, confidence must be in [0,1] (best-effort).
-      * hazard_conditions.*.value must be in {present, absent, uncertain} (when present).
-      * safety_events.* enums validated.
+      * visible must be boolean where present
+      * if visible==True, confidence must be in [0,1] (best-effort)
+      * enum validation for declared enum fields
+      * type checks for booleans/integers where specified
+      * PPE compliance values must be in {compliant, non_compliant, unknown}
 
 Teacher-run consensus weighting (optional):
   - consensus weight computed from teacher runs only:
-      sym_global_slot_acc (context+hazards+events)
-      sym_risk_summary_acc
+      sym_global_slot_acc
+      sym_overall_site_risk_acc
     and then averaged 50/50
 
 Dependencies:
@@ -52,7 +52,7 @@ import argparse
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 import pandas as pd
@@ -60,17 +60,18 @@ import pandas as pd
 from utils.eval_common import (
     _set_f1,
     compute_teacher_run_consensus_weight,
+    build_student_index,
     discover_student_files,
     discover_teacher_standards,
     get_path,
     is_confidence,
     read_json,
-    safe_float,
     weighted_mean,
 )
 
 BASE_DIR = Path(__file__).resolve().parents[1]
-GT_DIR = "/opt/dataset/test_dataset_json"
+TASK_NAME = "industry"
+GT_DIR = f"/opt/dataset/ds_{TASK_NAME}/test_dataset_json"
 
 
 # ----------------------------
@@ -78,27 +79,34 @@ GT_DIR = "/opt/dataset/test_dataset_json"
 # ----------------------------
 
 ENUMS: Dict[Tuple[Any, ...], set] = {
-    # context
-    ("context", "environment_type", "value"): {"construction", "industrial_plant", "warehouse", "roadway_work", "unknown"},
-    ("context", "camera_view", "value"): {"wide_area", "mid_range", "close_up", "unknown"},
-    # hazard_conditions values
-    ("hazard_conditions", "*", "value"): {"present", "absent", "uncertain"},
-    # safety_events
-    ("safety_events", "*", "event_type"): {"fall_hazard", "equipment_motion", "fire_or_smoke", "obstruction", "electrical", "storage", "other"},
-    ("safety_events", "*", "severity"): {"low", "medium", "high", "extreme"},
-    # risk_summary
-    ("risk_summary", "overall_risk_rating", "value"): {"low", "moderate", "high", "critical"},
+    # site_characterization
+    ("site_characterization", "site_type", "value"): {
+        "construction_site",
+        "oil_gas_platform",
+        "refinery",
+        "industrial_plant",
+        "unknown",
+    },
+    ("site_characterization", "activity_level", "value"): {"inactive", "low", "high", "emergency"},
+    # personnel_safety.ppe_compliance
+    ("personnel_safety", "ppe_compliance", "*", "value"): {"compliant", "non_compliant", "unknown"},
+    # safety_violations array
+    ("safety_violations", "*", "violation_type"): {"no_ppe", "restricted_area_entry", "unsafe_lifting", "fall_risk", "other"},
+    ("safety_violations", "*", "risk_level"): {"low", "medium", "high", "extreme"},
+    # overall_site_risk
+    ("overall_site_risk", "risk_rating", "value"): {"safe", "cautionary", "hazardous", "critical"},
 }
 
 HAZARD_KEYS = [
-    "unguarded_edges_or_openings",
-    "moving_heavy_equipment",
-    "vehicle_pedestrian_proximity_risk",
-    "poor_housekeeping_or_obstructions",
-    "unsafe_material_storage",
-    "electrical_hazard_indicators",
-    "fire_smoke_or_leak_indicators",
-    "weather_or_visibility_impairment",
+    "unsecured_heights",
+    "heavy_machinery_movement",
+    "visible_leaks_or_fire",
+]
+
+PPE_KEYS = [
+    "hard_hats",
+    "high_visibility_vests",
+    "specialized_gear",
 ]
 
 
@@ -106,26 +114,35 @@ HAZARD_KEYS = [
 # Slot paths (per-section)
 # ----------------------------
 
-CONTEXT_SLOTS: List[Tuple[Any, ...]] = [
-    ("context", "environment_type", "visible"),
-    ("context", "environment_type", "value"),
-    ("context", "environment_type", "confidence"),
-    ("context", "camera_view", "visible"),
-    ("context", "camera_view", "value"),
-    ("context", "camera_view", "confidence"),
-    ("context", "people_visible", "visible"),
-    ("context", "people_visible", "value"),
-    ("context", "people_visible", "confidence"),
+SITE_CHARACTERIZATION_SLOTS: List[Tuple[Any, ...]] = [
+    ("site_characterization", "site_type", "visible"),
+    ("site_characterization", "site_type", "value"),
+    ("site_characterization", "site_type", "confidence"),
+    ("site_characterization", "activity_level", "value"),
+    ("site_characterization", "activity_level", "confidence"),
 ]
 
-HAZARD_SLOTS: List[Tuple[Any, ...]] = []
-for hk in HAZARD_KEYS:
-    HAZARD_SLOTS.extend(
+PERSONNEL_SAFETY_SLOTS: List[Tuple[Any, ...]] = [
+    ("personnel_safety", "workers_present", "visible"),
+    ("personnel_safety", "workers_present", "value"),
+    ("personnel_safety", "workers_present", "count"),
+    ("personnel_safety", "workers_present", "confidence"),
+]
+for pk in PPE_KEYS:
+    PERSONNEL_SAFETY_SLOTS.extend(
         [
-            ("hazard_conditions", hk, "visible"),
-            ("hazard_conditions", hk, "value"),
-            ("hazard_conditions", hk, "confidence"),
-            ("hazard_conditions", hk, "intermittent"),
+            ("personnel_safety", "ppe_compliance", pk, "value"),
+            ("personnel_safety", "ppe_compliance", pk, "confidence"),
+        ]
+    )
+
+HAZARDOUS_CONDITIONS_SLOTS: List[Tuple[Any, ...]] = []
+for hk in HAZARD_KEYS:
+    HAZARDOUS_CONDITIONS_SLOTS.extend(
+        [
+            ("hazardous_conditions", hk, "visible"),
+            ("hazardous_conditions", hk, "value"),
+            ("hazardous_conditions", hk, "confidence"),
         ]
     )
 
@@ -136,9 +153,9 @@ for hk in HAZARD_KEYS:
 
 def _visible_path_for(path: Tuple[Any, ...]) -> Optional[Tuple[Any, ...]]:
     """
-    Maps any leaf within a "visible/value/confidence/intermittent" group to its "visible" path.
+    Maps any leaf within a "visible/value/confidence/count" group to its "visible" path.
     """
-    if len(path) >= 3 and path[-1] in {"value", "confidence", "intermittent"}:
+    if len(path) >= 3 and path[-1] in {"value", "confidence", "count"}:
         return tuple(path[:-1]) + ("visible",)
     return None
 
@@ -190,73 +207,62 @@ def _score_leaf_slots(student: Dict[str, Any], teacher: Dict[str, Any], paths: L
 
 
 # ----------------------------
-# safety_events scoring (bag-of-events)
+# safety_violations scoring (bag-of-violations)
 # ----------------------------
 
 @dataclass
-class EventScores:
+class ViolationScores:
     macro_acc: float
     presence_f1: float
     count_acc: float
-    intermittent_acc: float
     hits: List[float]
 
 
-def _event_key(ev: Dict[str, Any]) -> Optional[Tuple[str, str]]:
+def _violation_key(v: Dict[str, Any]) -> Optional[Tuple[str, str]]:
     """
-    Use (event_type, severity) as the identity of an event.
-    We deliberately ignore 'description' because it is free text and not reliably comparable.
+    Use (violation_type, risk_level) as the identity of a violation.
+    Ignore 'description' (free text) and do not score confidence directly.
     """
-    if not isinstance(ev, dict):
+    if not isinstance(v, dict):
         return None
-    et = ev.get("event_type")
-    sv = ev.get("severity")
-    if not (isinstance(et, str) and isinstance(sv, str)):
+    vt = v.get("violation_type")
+    rl = v.get("risk_level")
+    if not (isinstance(vt, str) and isinstance(rl, str)):
         return None
-    return (et, sv)
+    return (vt, rl)
 
 
-def _event_counts(arr: Any) -> Dict[Tuple[str, str], int]:
+def _violation_counts(arr: Any) -> Dict[Tuple[str, str], int]:
     out: Dict[Tuple[str, str], int] = {}
     if not isinstance(arr, list):
         return out
-    for ev in arr:
-        if not isinstance(ev, dict):
+    for v in arr:
+        if not isinstance(v, dict):
             continue
-        k = _event_key(ev)
+        k = _violation_key(v)
         if k is None:
             continue
         out[k] = out.get(k, 0) + 1
     return out
 
 
-def _event_intermittent_map(arr: Any) -> Dict[Tuple[str, str], bool]:
-    """
-    For each key, set intermittent=True if *any* instance has intermittent=True.
-    """
-    out: Dict[Tuple[str, str], bool] = {}
-    if not isinstance(arr, list):
-        return out
-    for ev in arr:
-        if not isinstance(ev, dict):
-            continue
-        k = _event_key(ev)
-        if k is None:
-            continue
-        inter = ev.get("intermittent")
-        out[k] = bool(out.get(k, False) or (inter is True))
-    return out
+def score_safety_violations(student: Dict[str, Any], teacher: Dict[str, Any]) -> ViolationScores:
+    s = student.get("safety_violations")
+    t = teacher.get("safety_violations")
 
-
-def score_safety_events(student: Dict[str, Any], teacher: Dict[str, Any]) -> EventScores:
-    s = student.get("safety_events")
-    t = teacher.get("safety_events")
-
-    s_counts = _event_counts(s)
-    t_counts = _event_counts(t)
+    s_counts = _violation_counts(s)
+    t_counts = _violation_counts(t)
 
     s_keys = set(s_counts.keys())
     t_keys = set(t_counts.keys())
+
+    if not t_keys:
+        return ViolationScores(
+            macro_acc=float("nan"),
+            presence_f1=float("nan"),
+            count_acc=float("nan"),
+            hits=[],
+        )
 
     presence_f1 = _set_f1(s_keys, t_keys)
 
@@ -266,52 +272,20 @@ def score_safety_events(student: Dict[str, Any], teacher: Dict[str, Any]) -> Eve
         count_hits.append(1.0 if s_counts.get(k, 0) == t_counts.get(k, 0) else 0.0)
     count_acc = float(np.mean(count_hits)) if count_hits else 1.0
 
-    # intermittent accuracy: only for teacher-present keys (if missing => False)
-    s_inter = _event_intermittent_map(s)
-    t_inter = _event_intermittent_map(t)
-    inter_hits: List[float] = []
-    for k in t_keys:
-        inter_hits.append(1.0 if bool(s_inter.get(k, False)) == bool(t_inter.get(k, False)) else 0.0)
-    intermittent_acc = float(np.mean(inter_hits)) if inter_hits else 1.0
-
-    hits = [presence_f1, count_acc, intermittent_acc]
+    hits = [presence_f1, count_acc]
     macro = float(np.mean(hits)) if hits else 0.0
-    return EventScores(macro_acc=macro, presence_f1=presence_f1, count_acc=count_acc, intermittent_acc=intermittent_acc, hits=hits)
+    return ViolationScores(macro_acc=macro, presence_f1=presence_f1, count_acc=count_acc, hits=hits)
 
 
 # ----------------------------
-# risk_summary scoring (separate)
+# overall_site_risk scoring (separate)
 # ----------------------------
 
 @dataclass
-class RiskSummaryScores:
+class OverallSiteRiskScores:
     macro_acc: float
-    overall_risk_rating_acc: float
-    primary_hazard_factors_f1: float
-    recommended_controls_f1: float
-
-
-def score_risk_summary(student: Dict[str, Any], teacher: Dict[str, Any]) -> RiskSummaryScores:
-    s = student.get("risk_summary")
-    t = teacher.get("risk_summary")
-    if not isinstance(s, dict) or not isinstance(t, dict):
-        return RiskSummaryScores(macro_acc=0.0, overall_risk_rating_acc=0.0, primary_hazard_factors_f1=0.0, recommended_controls_f1=0.0)
-
-    s_rr = get_path(s, ("overall_risk_rating", "value"))
-    t_rr = get_path(t, ("overall_risk_rating", "value"))
-    overall_acc = 1.0 if s_rr == t_rr else 0.0
-
-    s_phf = tcast_list_of_str(s.get("primary_hazard_factors"))
-    t_phf = tcast_list_of_str(t.get("primary_hazard_factors"))
-    phf_f1 = _set_f1(s_phf, t_phf)
-
-    s_rc = tcast_list_of_str(s.get("recommended_controls"))
-    t_rc = tcast_list_of_str(t.get("recommended_controls"))
-    rc_f1 = _set_f1(s_rc, t_rc)
-
-    per = [overall_acc, phf_f1, rc_f1]
-    macro = float(np.mean(per)) if per else 0.0
-    return RiskSummaryScores(macro_acc=macro, overall_risk_rating_acc=overall_acc, primary_hazard_factors_f1=phf_f1, recommended_controls_f1=rc_f1)
+    risk_rating_acc: float
+    primary_risk_factors_f1: float
 
 
 def tcast_list_of_str(x: Any) -> List[str]:
@@ -326,6 +300,25 @@ def tcast_list_of_str(x: Any) -> List[str]:
     return out
 
 
+def score_overall_site_risk(student: Dict[str, Any], teacher: Dict[str, Any]) -> OverallSiteRiskScores:
+    s = student.get("overall_site_risk")
+    t = teacher.get("overall_site_risk")
+    if not isinstance(s, dict) or not isinstance(t, dict):
+        return OverallSiteRiskScores(macro_acc=0.0, risk_rating_acc=0.0, primary_risk_factors_f1=0.0)
+
+    s_rr = get_path(s, ("risk_rating", "value"))
+    t_rr = get_path(t, ("risk_rating", "value"))
+    risk_rating_acc = 1.0 if s_rr == t_rr else 0.0
+
+    s_prf = tcast_list_of_str(s.get("primary_risk_factors"))
+    t_prf = tcast_list_of_str(t.get("primary_risk_factors"))
+    prf_f1 = _set_f1(s_prf, t_prf)
+
+    vals = [risk_rating_acc, prf_f1]
+    macro = float(np.mean(vals)) if vals else 0.0
+    return OverallSiteRiskScores(macro_acc=macro, risk_rating_acc=risk_rating_acc, primary_risk_factors_f1=prf_f1)
+
+
 # ----------------------------
 # Global slot metric aggregation
 # ----------------------------
@@ -333,9 +326,10 @@ def tcast_list_of_str(x: Any) -> List[str]:
 @dataclass
 class GlobalSlotScores:
     global_macro_acc: float
-    context_macro_acc: float
-    hazard_conditions_macro_acc: float
-    safety_events_macro_acc: float
+    site_characterization_macro_acc: float
+    personnel_safety_macro_acc: float
+    hazardous_conditions_macro_acc: float
+    safety_violations_macro_acc: float
 
 
 def score_global_and_sections(student: Dict[str, Any], teacher: Dict[str, Any]) -> Tuple[GlobalSlotScores, Dict[str, List[float]]]:
@@ -344,20 +338,27 @@ def score_global_and_sections(student: Dict[str, Any], teacher: Dict[str, Any]) 
       - section/global macro scores
       - raw hit lists per section (used to compute global as a true macro over leaves)
     """
-    ctx = _score_leaf_slots(student, teacher, CONTEXT_SLOTS)
-    haz = _score_leaf_slots(student, teacher, HAZARD_SLOTS)
-    sev = score_safety_events(student, teacher)
+    sc = _score_leaf_slots(student, teacher, SITE_CHARACTERIZATION_SLOTS)
+    ps = _score_leaf_slots(student, teacher, PERSONNEL_SAFETY_SLOTS)
+    hz = _score_leaf_slots(student, teacher, HAZARDOUS_CONDITIONS_SLOTS)
+    sv = score_safety_violations(student, teacher)
 
-    all_hits = ctx.hits + haz.hits + sev.hits
+    all_hits = sc.hits + ps.hits + hz.hits + sv.hits
     global_macro = float(np.mean(all_hits)) if all_hits else 0.0
 
     sec = GlobalSlotScores(
         global_macro_acc=global_macro,
-        context_macro_acc=ctx.macro_acc,
-        hazard_conditions_macro_acc=haz.macro_acc,
-        safety_events_macro_acc=sev.macro_acc,
+        site_characterization_macro_acc=sc.macro_acc,
+        personnel_safety_macro_acc=ps.macro_acc,
+        hazardous_conditions_macro_acc=hz.macro_acc,
+        safety_violations_macro_acc=sv.macro_acc,
     )
-    return sec, {"context": ctx.hits, "hazard_conditions": haz.hits, "safety_events": sev.hits}
+    return sec, {
+        "site_characterization": sc.hits,
+        "personnel_safety": ps.hits,
+        "hazardous_conditions": hz.hits,
+        "safety_violations": sv.hits,
+    }
 
 
 # ----------------------------
@@ -379,36 +380,53 @@ def _check_enum(value: Any, allowed: set, tag: str, errors: List[str]) -> None:
         errors.append(f"bad_enum:{tag}={value}")
 
 
+def _check_bool(value: Any, tag: str, errors: List[str]) -> None:
+    if value is None:
+        errors.append(f"missing_bool:{tag}")
+    elif not isinstance(value, bool):
+        errors.append(f"bad_bool:{tag}={value}")
+
+
+def _check_int(value: Any, tag: str, errors: List[str]) -> None:
+    if value is None:
+        errors.append(f"missing_int:{tag}")
+    elif not isinstance(value, int):
+        errors.append(f"bad_int:{tag}={value}")
+
+
 def validate_struct(obj: Optional[Dict[str, Any]]) -> ValidationReport:
-    if obj is None:
+    if obj is None or not isinstance(obj, dict):
         return ValidationReport(parse_ok=False, schema_ok=False, rule_ok=False, errors=["parse_failed_or_not_object"])
 
     errors: List[str] = []
 
-    required_top = ["context", "hazard_conditions", "safety_events", "risk_summary"]
+    required_top = ["site_characterization", "personnel_safety", "hazardous_conditions", "safety_violations", "overall_site_risk"]
     for k in required_top:
         if k not in obj:
             errors.append(f"missing_top_level:{k}")
 
-    ctx = obj.get("context")
-    if not isinstance(ctx, dict):
-        errors.append("not_object:context")
+    sc = obj.get("site_characterization")
+    if not isinstance(sc, dict):
+        errors.append("not_object:site_characterization")
 
-    haz = obj.get("hazard_conditions")
-    if not isinstance(haz, dict):
-        errors.append("not_object:hazard_conditions")
+    ps = obj.get("personnel_safety")
+    if not isinstance(ps, dict):
+        errors.append("not_object:personnel_safety")
 
-    sev = obj.get("safety_events")
-    if not isinstance(sev, list):
-        errors.append("safety_events_not_list")
+    hz = obj.get("hazardous_conditions")
+    if not isinstance(hz, dict):
+        errors.append("not_object:hazardous_conditions")
 
-    rs = obj.get("risk_summary")
-    if not isinstance(rs, dict):
-        errors.append("not_object:risk_summary")
+    sv = obj.get("safety_violations")
+    if not isinstance(sv, list):
+        errors.append("safety_violations_not_list")
+
+    osr = obj.get("overall_site_risk")
+    if not isinstance(osr, dict):
+        errors.append("not_object:overall_site_risk")
 
     rule_ok = True
 
-    # confidence checks for context + hazards + events (best-effort)
     def check_conf(path: Tuple[Any, ...], tag: str) -> None:
         v = get_path(obj, path)
         if v is None:
@@ -417,53 +435,73 @@ def validate_struct(obj: Optional[Dict[str, Any]]) -> ValidationReport:
         if not is_confidence(v):
             errors.append(f"bad_conf:{tag}={v}")
 
-    # context confidence when visible true
-    for k in ["environment_type", "camera_view", "people_visible"]:
-        vis = get_path(obj, ("context", k, "visible"))
-        if vis is True:
-            check_conf(("context", k, "confidence"), f"context.{k}.confidence")
-        elif vis not in (True, False):
-            errors.append(f"missing_or_bad_visible:context.{k}.visible")
-            rule_ok = False
+    # site_characterization.site_type (visible-gated)
+    vis = get_path(obj, ("site_characterization", "site_type", "visible"))
+    if vis not in (True, False):
+        errors.append("missing_or_bad_visible:site_characterization.site_type.visible")
+        rule_ok = False
+    elif vis is True:
+        check_conf(("site_characterization", "site_type", "confidence"), "site_characterization.site_type.confidence")
 
-    # hazards: visible present + if visible true -> confidence + intermittent should be bool
+    # activity_level has no visible; still validate confidence best-effort
+    check_conf(("site_characterization", "activity_level", "confidence"), "site_characterization.activity_level.confidence")
+
+    # personnel_safety.workers_present (visible-gated)
+    wvis = get_path(obj, ("personnel_safety", "workers_present", "visible"))
+    if wvis not in (True, False):
+        errors.append("missing_or_bad_visible:personnel_safety.workers_present.visible")
+        rule_ok = False
+    elif wvis is True:
+        check_conf(("personnel_safety", "workers_present", "confidence"), "personnel_safety.workers_present.confidence")
+        _check_bool(get_path(obj, ("personnel_safety", "workers_present", "value")), "personnel_safety.workers_present.value", errors)
+        _check_int(get_path(obj, ("personnel_safety", "workers_present", "count")), "personnel_safety.workers_present.count", errors)
+
+    # PPE compliance (always present in schema; validate enums + confidence)
+    for pk in PPE_KEYS:
+        pv = get_path(obj, ("personnel_safety", "ppe_compliance", pk, "value"))
+        _check_enum(pv, ENUMS[("personnel_safety", "ppe_compliance", "*", "value")], f"personnel_safety.ppe_compliance.{pk}.value", errors)
+        check_conf(("personnel_safety", "ppe_compliance", pk, "confidence"), f"personnel_safety.ppe_compliance.{pk}.confidence")
+
+    # hazardous_conditions (visible-gated; value must be boolean if visible True)
     for hk in HAZARD_KEYS:
-        vis = get_path(obj, ("hazard_conditions", hk, "visible"))
-        if vis not in (True, False):
-            errors.append(f"missing_or_bad_visible:hazard_conditions.{hk}.visible")
+        hvis = get_path(obj, ("hazardous_conditions", hk, "visible"))
+        if hvis not in (True, False):
+            errors.append(f"missing_or_bad_visible:hazardous_conditions.{hk}.visible")
             rule_ok = False
             continue
-        if vis is True:
-            check_conf(("hazard_conditions", hk, "confidence"), f"hazard_conditions.{hk}.confidence")
-            inter = get_path(obj, ("hazard_conditions", hk, "intermittent"))
-            if inter is None:
-                errors.append(f"missing_field:hazard_conditions.{hk}.intermittent")
-                rule_ok = False
-            elif not isinstance(inter, bool):
-                errors.append(f"bad_type:hazard_conditions.{hk}.intermittent={inter}")
-                rule_ok = False
+        if hvis is True:
+            check_conf(("hazardous_conditions", hk, "confidence"), f"hazardous_conditions.{hk}.confidence")
+            _check_bool(get_path(obj, ("hazardous_conditions", hk, "value")), f"hazardous_conditions.{hk}.value", errors)
 
-    # safety_events
-    if isinstance(sev, list):
-        for i, ev in enumerate(sev):
-            if not isinstance(ev, dict):
-                errors.append(f"safety_events[{i}]_not_object")
+    # safety_violations list elements: enums + confidence + count
+    if isinstance(sv, list):
+        for i, v in enumerate(sv):
+            if not isinstance(v, dict):
+                errors.append(f"safety_violations[{i}]_not_object")
                 rule_ok = False
                 continue
-            c = ev.get("confidence")
+            _check_enum(v.get("violation_type"), ENUMS[("safety_violations", "*", "violation_type")], f"safety_violations[{i}].violation_type", errors)
+            _check_enum(v.get("risk_level"), ENUMS[("safety_violations", "*", "risk_level")], f"safety_violations[{i}].risk_level", errors)
+            c = v.get("confidence")
             if c is None:
-                errors.append(f"missing_conf:safety_events[{i}].confidence")
+                errors.append(f"missing_conf:safety_violations[{i}].confidence")
                 rule_ok = False
             elif not is_confidence(c):
-                errors.append(f"bad_conf:safety_events[{i}].confidence={c}")
+                errors.append(f"bad_conf:safety_violations[{i}].confidence={c}")
                 rule_ok = False
-            inter = ev.get("intermittent")
-            if inter is None:
-                errors.append(f"missing_field:safety_events[{i}].intermittent")
-                rule_ok = False
-            elif not isinstance(inter, bool):
-                errors.append(f"bad_type:safety_events[{i}].intermittent={inter}")
-                rule_ok = False
+            _check_int(v.get("count"), f"safety_violations[{i}].count", errors)
+
+    # overall_site_risk: validate risk_rating enum + confidence; primary_risk_factors list presence
+    rr_val = get_path(obj, ("overall_site_risk", "risk_rating", "value"))
+    _check_enum(rr_val, ENUMS[("overall_site_risk", "risk_rating", "value")], "overall_site_risk.risk_rating.value", errors)
+    check_conf(("overall_site_risk", "risk_rating", "confidence"), "overall_site_risk.risk_rating.confidence")
+    prf = get_path(obj, ("overall_site_risk", "primary_risk_factors"))
+    if prf is None:
+        errors.append("missing_field:overall_site_risk.primary_risk_factors")
+        rule_ok = False
+    elif not isinstance(prf, list):
+        errors.append("bad_type:overall_site_risk.primary_risk_factors")
+        rule_ok = False
 
     # Enum checks (non-wildcard)
     for path, allowed in ENUMS.items():
@@ -472,31 +510,26 @@ def validate_struct(obj: Optional[Dict[str, Any]]) -> ValidationReport:
         v = get_path(obj, path)
         _check_enum(v, allowed, ".".join(map(str, path)), errors)
 
-    # Enum checks (wildcard): hazards
-    if isinstance(haz, dict):
-        allowed = ENUMS[("hazard_conditions", "*", "value")]
-        for hk in HAZARD_KEYS:
-            v = get_path(obj, ("hazard_conditions", hk, "value"))
-            _check_enum(v, allowed, f"hazard_conditions.{hk}.value", errors)
-
-    # Enum checks (wildcard): safety_events
-    if isinstance(sev, list):
-        for i, ev in enumerate(sev):
-            if not isinstance(ev, dict):
-                continue
-            _check_enum(ev.get("event_type"), ENUMS[("safety_events", "*", "event_type")], f"safety_events[{i}].event_type", errors)
-            _check_enum(ev.get("severity"), ENUMS[("safety_events", "*", "severity")], f"safety_events[{i}].severity", errors)
-
     schema_ok = not any(
         e.startswith("missing_top_level:")
         or e.startswith("not_object:")
         or e.endswith("_not_list")
         or e.startswith("missing_enum:")
         or e.startswith("bad_enum:")
+        or e.startswith("missing_bool:")
+        or e.startswith("missing_int:")
         for e in errors
     )
 
-    if any(e.startswith("bad_conf:") or e.startswith("missing_or_bad_visible:") or e.startswith("bad_type:") for e in errors):
+    if any(
+        e.startswith("bad_conf:")
+        or e.startswith("missing_conf:")
+        or e.startswith("missing_or_bad_visible:")
+        or e.startswith("bad_type:")
+        or e.startswith("bad_bool:")
+        or e.startswith("bad_int:")
+        for e in errors
+    ):
         rule_ok = False
 
     return ValidationReport(parse_ok=True, schema_ok=schema_ok, rule_ok=rule_ok, errors=errors)
@@ -512,14 +545,15 @@ def _sym_global_slot_acc(a: Dict[str, Any], b: Dict[str, Any]) -> float:
     return 0.5 * (sa.global_macro_acc + sb.global_macro_acc)
 
 
-def _sym_risk_summary_acc(a: Dict[str, Any], b: Dict[str, Any]) -> float:
-    return 0.5 * (score_risk_summary(a, b).macro_acc + score_risk_summary(b, a).macro_acc)
+def _sym_overall_site_risk_acc(a: Dict[str, Any], b: Dict[str, Any]) -> float:
+    return 0.5 * (score_overall_site_risk(a, b).macro_acc + score_overall_site_risk(b, a).macro_acc)
 
 
 def _consensus_pair_score(a: Dict[str, Any], b: Dict[str, Any]) -> float:
     gpair = _sym_global_slot_acc(a, b)
-    rpair = _sym_risk_summary_acc(a, b)
-    return 0.5 * gpair + 0.5 * rpair
+    rpair = _sym_overall_site_risk_acc(a, b)
+    vals = [v for v in (gpair, rpair) if not np.isnan(v)]
+    return float(np.mean(vals)) if vals else 0.0
 
 
 # ----------------------------
@@ -550,15 +584,30 @@ def build_parser() -> argparse.ArgumentParser:
 def run(args: argparse.Namespace) -> None:
     args.out.mkdir(parents=True, exist_ok=True)
     verbose = bool(args.verbose)
+    df_agg_out = args.out / "model_summary.csv"
 
     def log(msg: str) -> None:
         if verbose:
             print(msg)
 
+    existing_summary = None
+    existing_models: Set[str] = set()
+    if df_agg_out.exists():
+        try:
+            existing_summary = pd.read_csv(df_agg_out)
+            if "model" in existing_summary.columns:
+                existing_models = {m.replace("-", "_") for m in existing_summary["model"].dropna().astype(str)}
+            else:
+                log(f"Warning: existing summary missing 'model' column: {df_agg_out}")
+        except Exception as exc:
+            log(f"Warning: failed to read existing summary {df_agg_out}: {exc}")
+
     teacher_standards = discover_teacher_standards(args.results_gold)
     if args.limit_videos is not None:
         teacher_standards = teacher_standards[: args.limit_videos]
     log(f"Found {len(teacher_standards)} teacher standards in {args.results_gold}")
+
+    student_index = build_student_index(args.results, video_ids={vid for (vid, _p) in teacher_standards})
 
     rows: List[Dict[str, Any]] = []
     per_video_details: List[Dict[str, Any]] = []
@@ -582,11 +631,13 @@ def run(args: argparse.Namespace) -> None:
                 _consensus_pair_score,
             )
 
-        student_files = discover_student_files(args.results, video_id)
+        student_files = discover_student_files(args.results, video_id, index=student_index)
         if args.model:
             allowed = {m.replace("-", "_") for m in args.model}
             if "all" not in allowed:
                 student_files = [(m, p) for (m, p) in student_files if m.replace("-", "_") in allowed]
+        if existing_models:
+            student_files = [(m, p) for (m, p) in student_files if m.replace("-", "_") not in existing_models]
 
         if args.skip_missing_students and not student_files:
             continue
@@ -598,43 +649,44 @@ def run(args: argparse.Namespace) -> None:
             vrep = validate_struct(student)
 
             global_slot = None
-            context_slot = None
-            hazard_slot = None
-            safety_events_slot = None
+            site_characterization_slot = None
+            personnel_safety_slot = None
+            hazardous_conditions_slot = None
+            safety_violations_slot = None
 
-            risk_summary_macro = None
-            overall_risk_rating_acc = None
-            primary_hazard_factors_f1 = None
-            recommended_controls_f1 = None
+            overall_site_risk_macro = None
+            risk_rating_acc = None
+            primary_risk_factors_f1 = None
 
-            if student is not None:
+            if vrep.parse_ok and isinstance(student, dict) and "error" not in student:
                 sec, _hits = score_global_and_sections(student, teacher)
                 global_slot = sec.global_macro_acc
-                context_slot = sec.context_macro_acc
-                hazard_slot = sec.hazard_conditions_macro_acc
-                safety_events_slot = sec.safety_events_macro_acc
+                site_characterization_slot = sec.site_characterization_macro_acc
+                personnel_safety_slot = sec.personnel_safety_macro_acc
+                hazardous_conditions_slot = sec.hazardous_conditions_macro_acc
+                safety_violations_slot = sec.safety_violations_macro_acc
 
-                rs = score_risk_summary(student, teacher)
-                risk_summary_macro = rs.macro_acc
-                overall_risk_rating_acc = rs.overall_risk_rating_acc
-                primary_hazard_factors_f1 = rs.primary_hazard_factors_f1
-                recommended_controls_f1 = rs.recommended_controls_f1
+                osr = score_overall_site_risk(student, teacher)
+                overall_site_risk_macro = osr.macro_acc
+                risk_rating_acc = osr.risk_rating_acc
+                primary_risk_factors_f1 = osr.primary_risk_factors_f1
 
             rows.append(
                 {
                     "video": video_id,
                     "model": model_name,
                     "parse_ok": vrep.parse_ok,
+                    "has_error": ("error" in student) if isinstance(student, dict) else False,
                     "schema_ok": vrep.schema_ok,
                     "rule_ok": vrep.rule_ok,
                     "global_slot_macro_acc": global_slot,
-                    "context_slot_macro_acc": context_slot,
-                    "hazard_conditions_slot_macro_acc": hazard_slot,
-                    "safety_events_macro_acc": safety_events_slot,
-                    "risk_summary_macro_acc": risk_summary_macro,
-                    "overall_risk_rating_acc": overall_risk_rating_acc,
-                    "primary_hazard_factors_f1": primary_hazard_factors_f1,
-                    "recommended_controls_f1": recommended_controls_f1,
+                    "site_characterization_slot_macro_acc": site_characterization_slot,
+                    "personnel_safety_slot_macro_acc": personnel_safety_slot,
+                    "hazardous_conditions_slot_macro_acc": hazardous_conditions_slot,
+                    "safety_violations_macro_acc": safety_violations_slot,
+                    "overall_site_risk_macro_acc": overall_site_risk_macro,
+                    "risk_rating_acc": risk_rating_acc,
+                    "primary_risk_factors_f1": primary_risk_factors_f1,
                     "teacher_consensus_weight": consensus_weight,
                     "student_path": str(student_path),
                     "teacher_path": str(teacher_path),
@@ -655,6 +707,16 @@ def run(args: argparse.Namespace) -> None:
 
     df = pd.DataFrame(rows)
     df_out = args.out / "per_video_scores.csv"
+    if df_out.exists():
+        try:
+            df_existing = pd.read_csv(df_out)
+            if not df_existing.empty:
+                if df.empty:
+                    df = df_existing
+                else:
+                    df = pd.concat([df_existing, df], ignore_index=True)
+        except Exception as exc:
+            log(f"Warning: failed to read existing per-video scores {df_out}: {exc}")
     df.to_csv(df_out, index=False)
 
     # Aggregate per model
@@ -667,18 +729,19 @@ def run(args: argparse.Namespace) -> None:
                 x = pd.to_numeric(g2[col], errors="coerce")
                 return float(x.mean()) if x.notna().any() else float("nan")
 
-            parse_rate = float(g2["parse_ok"].mean())
+            parse_rate = float((g2["parse_ok"] & ~g2["has_error"]).mean())
             schema_rate = float(g2["schema_ok"].mean())
             rule_rate = float(g2["rule_ok"].mean())
 
             global_mean = mean_or_nan("global_slot_macro_acc")
-            risk_summary_mean = mean_or_nan("risk_summary_macro_acc")
+            osr_mean = mean_or_nan("overall_site_risk_macro_acc")
+            effective_global = float(global_mean * schema_rate) if not np.isnan(global_mean) else float("nan")
 
             weighted_global = float("nan")
-            weighted_risk_summary = float("nan")
+            weighted_osr = float("nan")
             if args.include_teacher_runs:
                 weighted_global = weighted_mean(g2["global_slot_macro_acc"], g2["teacher_consensus_weight"])
-                weighted_risk_summary = weighted_mean(g2["risk_summary_macro_acc"], g2["teacher_consensus_weight"])
+                weighted_osr = weighted_mean(g2["overall_site_risk_macro_acc"], g2["teacher_consensus_weight"])
 
             agg_rows.append(
                 {
@@ -688,33 +751,46 @@ def run(args: argparse.Namespace) -> None:
                     "schema_rate": schema_rate,
                     "rule_rate": rule_rate,
                     "global_slot_macro_acc_mean": global_mean,
-                    "context_slot_macro_acc_mean": mean_or_nan("context_slot_macro_acc"),
-                    "hazard_conditions_slot_macro_acc_mean": mean_or_nan("hazard_conditions_slot_macro_acc"),
-                    "safety_events_macro_acc_mean": mean_or_nan("safety_events_macro_acc"),
-                    "risk_summary_macro_acc_mean": risk_summary_mean,
-                    "overall_risk_rating_acc_mean": mean_or_nan("overall_risk_rating_acc"),
-                    "primary_hazard_factors_f1_mean": mean_or_nan("primary_hazard_factors_f1"),
-                    "recommended_controls_f1_mean": mean_or_nan("recommended_controls_f1"),
+                    "effective_global_slot_macro_acc_mean": effective_global,
+                    "site_characterization_slot_macro_acc_mean": mean_or_nan("site_characterization_slot_macro_acc"),
+                    "personnel_safety_slot_macro_acc_mean": mean_or_nan("personnel_safety_slot_macro_acc"),
+                    "hazardous_conditions_slot_macro_acc_mean": mean_or_nan("hazardous_conditions_slot_macro_acc"),
+                    "safety_violations_macro_acc_mean": mean_or_nan("safety_violations_macro_acc"),
+                    "overall_site_risk_macro_acc_mean": osr_mean,
+                    "risk_rating_acc_mean": mean_or_nan("risk_rating_acc"),
+                    "primary_risk_factors_f1_mean": mean_or_nan("primary_risk_factors_f1"),
                     "weight_global_slot_macro_acc_mean": weighted_global,
-                    "weight_risk_summary_macro_acc_mean": weighted_risk_summary,
+                    "weight_overall_site_risk_macro_acc_mean": weighted_osr,
                 }
             )
 
     df_agg = pd.DataFrame(agg_rows)
     if not df_agg.empty:
         df_agg = df_agg.sort_values(
-            by=["rule_rate", "global_slot_macro_acc_mean", "risk_summary_macro_acc_mean"],
+            by=["rule_rate", "global_slot_macro_acc_mean", "overall_site_risk_macro_acc_mean"],
             ascending=False,
         )
 
-    df_agg_out = args.out / "model_summary.csv"
+    if existing_summary is not None and not existing_summary.empty:
+        if df_agg.empty:
+            df_agg = existing_summary
+        else:
+            df_agg = pd.concat([existing_summary, df_agg], ignore_index=True)
     df_agg.to_csv(df_agg_out, index=False)
 
-    (args.out / "details.json").write_text(json.dumps(per_video_details, indent=2), encoding="utf-8")
+    details_path = args.out / "details.json"
+    if details_path.exists():
+        try:
+            existing_details = json.loads(details_path.read_text(encoding="utf-8"))
+            if isinstance(existing_details, list) and existing_details:
+                per_video_details = existing_details + per_video_details
+        except Exception as exc:
+            log(f"Warning: failed to read existing details {details_path}: {exc}")
+    details_path.write_text(json.dumps(per_video_details, indent=2), encoding="utf-8")
 
     print(f"Wrote: {df_out}")
     print(f"Wrote: {df_agg_out}")
-    print(f"Wrote: {args.out / 'details.json'}")
+    print(f"Wrote: {details_path}")
 
 
 def main() -> None:

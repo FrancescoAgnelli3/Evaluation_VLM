@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 import pandas as pd
@@ -113,7 +113,69 @@ def discover_teacher_runs(results_gold: Path, video_id: str) -> List[Path]:
     return sorted(set(out))
 
 
-def discover_student_files(results: Path, video_id: str) -> List[Tuple[str, Path]]:
+def build_student_index(
+    results: Path,
+    video_ids: Optional[Set[str]] = None,
+) -> Dict[str, List[Tuple[str, Path]]]:
+    """
+    Build a mapping: video_id -> list[(model, path)].
+    This avoids re-walking the results tree for every video.
+    """
+    suffixes = ["_json_answer.json", "_integrated.json", ".json"]
+    index: Dict[str, List[Tuple[str, Path]]] = {}
+    vid_set = video_ids or set()
+
+    for p in results.rglob("*"):
+        if not p.is_file():
+            continue
+        name = p.name
+        matched_suffix = next((s for s in suffixes if name.endswith(s)), None)
+        if matched_suffix is None:
+            continue
+        stem = name[: -len(matched_suffix)] if matched_suffix != ".json" else name[: -len(".json")]
+
+        # Prefer matching against known video IDs (exact, including underscores).
+        video_id = None
+        model = None
+        if vid_set:
+            s = stem
+            if s.startswith("question_"):
+                s = s[len("question_") :]
+            # Find the longest prefix that matches a known video_id.
+            best = None
+            for i, ch in enumerate(s):
+                if ch != "_":
+                    continue
+                prefix = s[:i]
+                if prefix in vid_set:
+                    best = prefix
+            if best is not None:
+                video_id = best
+                model = s[len(best) + 1 :] or "unknown"
+
+        # Fallback: minimal heuristic (kept for backward compatibility).
+        if video_id is None or model is None:
+            m = re.search(r"(?:^|_)(?:question_)?([^_]+)_(.+)$", stem)
+            if not m:
+                continue
+            video_id = m.group(1)
+            model = m.group(2) or "unknown"
+
+        index.setdefault(video_id, []).append((model, p))
+
+    for video_id, files in index.items():
+        index[video_id] = sorted(files, key=lambda x: x[0])
+
+    return index
+
+
+def discover_student_files(
+    results: Path,
+    video_id: str,
+    index: Optional[Dict[str, List[Tuple[str, Path]]]] = None,
+) -> List[Tuple[str, Path]]:
+    if index is not None:
+        return index.get(video_id, [])
     suffixes = ["_json_answer.json", "_integrated.json", ".json"]
     files: List[Tuple[str, Path]] = []
     vid_re = re.compile(rf"(?:^|_)(?:question_)?{re.escape(video_id)}_(.+)$")

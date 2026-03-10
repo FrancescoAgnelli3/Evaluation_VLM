@@ -13,7 +13,12 @@ Video VLM evaluation harness for road-safety perception. It can:
   - `create_gold_standard_gemini.py`: generate Gemini perception JSON (teacher runs).
   - `aggregate_gold_standard.py`: aggregate multiple Gemini runs into a single target.
   - `render_answer_images.py`: render annotated images summarizing model outputs.
+  - `run_answer_questions_tasks.sh`: run `answer_questions.py` across multiple tasks/models.
+  - `run_answer_questions_when_gpus_free.sh`: wait for idle GPUs, then run inference.
   - `vllm_utils.py`: vLLM server management + model registry.
+  - `utils/models_utils.py`: model key -> repo/path + served-name registry.
+  - `utils/serve_dataset.sh`: simple HTTP server for local datasets.
+  - `prompts/`: task prompts (`prompt_road.txt`, `prompt_people.txt`, `prompt_environment.txt`, `prompt_industry.txt`).
 - `FT_Qwen3/`: Qwen3-VL fine-tuning scripts (LoRA/QLoRA) + merge utilities.
 - `FT_Cosmos/`: Cosmos-Reason2 fine-tuning scripts (LoRA/QLoRA) + merge utilities.
 - `demos/`: sample videos + `questions.json`.
@@ -116,6 +121,8 @@ NUM_GPUS=4 bash FT_Qwen3/run.sh \
 
 Scripts live in `FT_Cosmos/`. This training script uses TRL SFTTrainer and has
 an internal multi-process launcher when multiple GPUs are available.
+It supports either matching `*.mp4` + `*.json` pairs or a `metadata.jsonl` file
+inside `--json_dir`.
 
 ## Build Cosmos full-FT dataset (LLaVA format)
 
@@ -197,7 +204,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
 Default paths in `FT_Cosmos/train_qwen3vl_video_json.py`:
 - `VIDEO_DIR = /opt/dataset/train_dataset`
 - `JSON_DIR = /opt/dataset/train_dataset_json`
-- `PROMPT_DIR = FT_Cosmos/prompts/prompt_json.txt`
+- `PROMPT_DIR = FT_Cosmos/prompts/prompt_road.txt` (update via `--prompt_path`)
 - `OUTPUT_DIR = /opt/models/Cosmos-Reason2-FT/adapter/`
 
 2) Train
@@ -205,6 +212,7 @@ Default paths in `FT_Cosmos/train_qwen3vl_video_json.py`:
 ```bash
 bash FT_Cosmos/run.sh \
   --base_model nvidia/Cosmos-Reason2-8B \
+  --prompt_path FT_Cosmos/prompts/prompt_road.txt \
   --output_dir /opt/models/Cosmos-Reason2-FT/adapter \
 ```
 
@@ -216,10 +224,26 @@ python3 FT_Cosmos/merge_weights.py \
   --output_dir /opt/models/Cosmos-Reason2-FT/LoRA/merged
 ```
 
+Tip: For task-specific LoRA runs, point `--prompt_path` at:
+`FT_Cosmos/prompts/prompt_people.txt`, `prompt_environment.txt`, or `prompt_industry.txt`.
+
+Helper for multi-task runs:
+
+```bash
+bash FT_Cosmos/launch_ft_and_merge.sh
+```
+
 ## Inference (vLLM)
 
 `Evaluation/answer_questions.py` auto-starts vLLM via `Evaluation/vllm_utils.py`.
 Model keys are mapped to HF repos or local paths in that file.
+
+Tasks: `road`, `people`, `environment`, `industry`.
+Default media dirs:
+- road: `/opt/dataset/test_dataset`
+- people: `/opt/dataset/ds_people/test_dataset`
+- environment: `/opt/dataset/ds_environment/test_dataset`
+- industry: `/opt/dataset/ds_industry/test_dataset`
 
 Example (road task):
 
@@ -229,19 +253,39 @@ python3 Evaluation/answer_questions.py \
   --model all
 ```
 
-Example (person task):
+Example (people task):
 
 ```bash
 python3 Evaluation/answer_questions.py \
-  --task person \
+  --task people \
   --model all
 ```
 
 By default, outputs go to `Evaluation/results_{task}` unless you override with `--output-dir`.
 
+Batch helpers:
+
+```bash
+bash Evaluation/run_answer_questions_tasks.sh
+bash Evaluation/run_answer_questions_when_gpus_free.sh
+```
+
+### Serve videos over HTTP (local dataset)
+
+If your evaluation environment expects videos via HTTP, use the helper script to
+serve a local dataset folder and configure the URL env vars:
+
+```bash
+bash Evaluation_VLM/Evaluation/utils/serve_dataset.sh 8000 /opt/dataset
+
+export VIDEO_USE_DATA_URL=0
+export VIDEO_URL_ROOT=/opt/dataset
+export VIDEO_URL_PREFIX=http://127.0.0.1:8000
+```
+
 ### Add a new model choice (new repo/path)
 
-To add a selectable model key (for `--model`), update `Evaluation/vllm_utils.py`:
+To add a selectable model key (for `--model`), update `Evaluation/utils/models_utils.py`:
 
 1) Add a repo/path variable (with env override)
 
@@ -254,11 +298,11 @@ Append your key to `MODEL_CHOICES`, e.g. `"my-model"`.
 
 3) Map key -> served model name
 
-Add a case in `_served_name_for()` so vLLM knows the served name.
+Add a case in `served_name_for()` so vLLM knows the served name.
 
 4) Map key -> repo/path
 
-Add a case in `_resolve_model_repo()` to return your `MY_MODEL_REPO`.
+Add a case in `resolve_model_repo()` to return your `MY_MODEL_REPO`.
 
 Then run inference with:
 
@@ -289,15 +333,15 @@ Outputs:
 Other tasks:
 
 ```bash
-python3 Evaluation/eval.py --task person
-python3 Evaluation/eval.py --task ambient
+python3 Evaluation/eval.py --task people
+python3 Evaluation/eval.py --task environment
 python3 Evaluation/eval.py --task industry
 ```
 
 Defaults:
 - road: `results_road` -> `eval_out_road`
-- person: `results_person` -> `eval_out_person`
-- ambient: `results_ambient` -> `eval_out_urban`
+- people: `results_people` -> `eval_out_people`
+- environment: set with `--results` / `--out` (see `Evaluation/utils/eval_enviroment.py`)
 - industry: `results_industry` -> `eval_out_industry`
 
 ## Notes

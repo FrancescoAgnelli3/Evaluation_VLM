@@ -1,0 +1,57 @@
+"""
+You are analyzing a sequence of frames extracted in temporal order from an urban/environmental monitoring video.
+
+Your task is to produce a structured urban-environmental assessment in JSON format.
+
+You must follow two independent layers:
+(1) epistemic rules (what is visible vs what is uncertain)
+(2) the output schema (what fields must exist)
+
+Output ONLY valid JSON.
+Do NOT include explanations, markdown, or extra text.
+
+────────────────────────────────────────────
+EPISTEMIC RULES
+────────────────────────────────────────────
+1. Visibility vs uncertainty: Use "visible": false ONLY for absent elements. If "visible": true, you MUST provide "value" and "confidence" [0,1]. Use "value": "unknown" for blurred or distant objects.
+2. Consistency Check: If an action or state (e.g., graffiti, broken light, littering) is recognized in the "value" or "description" fields, the corresponding "visible" flag MUST be set to true. Do not contradict the visibility status with the descriptive analysis.
+3. Degradation status: "urban_decay" refers to structural issues (broken lights, ruined walls), while "pollution" refers to transient waste or liquid spills.
+4. Mandatory Event Logging: If any form of degradation, vandalism, or illegal dumping is marked as "visible": true, you MUST include at least one corresponding entry in the "degradation_events" array. Do not leave the array empty if visibility flags are true.
+
+────────────────────────────────────────────
+OUTPUT SCHEMA
+────────────────────────────────────────────
+{
+    "waste_management": {
+        "illegal_dumping": { "visible": "<boolean>", "value": "<boolean>", "confidence": "<number>" },
+        "waste_location": { "value": "sidewalk | green_area | roadside_layby | unknown", "confidence": "<number>" },
+        "waste_type": ["<string: household | bulky | hazardous | unknown>"]
+    },
+    "urban_degradation": {
+        "graffiti_vandalism": { "visible": "<boolean>", "value": "<boolean>", "confidence": "<number>", "target": "wall | public_building | unknown" },
+        "vehicle_vandalism": { "visible": "<boolean>", "value": "<boolean>", "confidence": "<number>", "description": "<string>" },
+        "infrastructure_damage": {
+            "broken_street_lights": { "visible": "<boolean>", "value": "<boolean>", "confidence": "<number>" },
+            "damaged_signage": { "visible": "<boolean>", "value": "<boolean>", "confidence": "<number>" },
+            "deteriorated_surfaces": { "visible": "<boolean>", "value": "<boolean>", "confidence": "<number>" }
+        }
+    },
+    "environmental_pollution": {
+        "visible_spills": { "visible": "<boolean>", "value": "<boolean>", "confidence": "<number>" },
+        "air_smoke_emissions": { "visible": "<boolean>", "value": "<boolean>", "confidence": "<number>" }
+    },
+    "degradation_events": [
+        {
+            "type": "littering_in_progress | vandalism_act | vehicle_damage_act | structural_collapse | fly_tipping",
+            "description": "<string>",
+            "impact_level": "minor | moderate | severe",
+            "confidence": "<number>",
+            "in_progress": "<boolean>"
+        }
+    ],
+    "aesthetic_and_safety_score": {
+        "degradation_index": { "value": "negligible | low | moderate | high", "confidence": "<number>" },
+        "top_priority_issues": ["<string>"]
+    }
+}
+"""

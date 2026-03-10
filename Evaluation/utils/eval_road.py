@@ -39,7 +39,7 @@ import argparse
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -47,6 +47,7 @@ import pandas as pd
 from utils.eval_common import (
     _set_f1,
     compute_teacher_run_consensus_weight,
+    build_student_index,
     discover_student_files,
     discover_teacher_standards,
     get_path,
@@ -59,7 +60,8 @@ from utils.eval_common import (
 )
 
 BASE_DIR = Path(__file__).resolve().parents[1]
-GT_DIR = "/opt/dataset/test_dataset_json"
+TASK_NAME = "road"
+GT_DIR = f"/opt/dataset/test_dataset_json"
 
 
 # ----------------------------
@@ -394,6 +396,14 @@ def score_vehicle_events(student: Dict[str, Any], teacher: Dict[str, Any]) -> Ev
     s_keys = set(s_counts.keys())
     t_keys = set(t_counts.keys())
 
+    if not t_keys:
+        return EventScores(
+            macro_acc=float("nan"),
+            presence_f1=float("nan"),
+            count_acc=float("nan"),
+            hits=[],
+        )
+
     presence_f1 = _set_f1(s_keys, t_keys)
 
     # count accuracy: exact match per teacher key (missing => 0)
@@ -416,6 +426,14 @@ def score_pedestrian_events(student: Dict[str, Any], teacher: Dict[str, Any]) ->
 
     s_keys = set(s_counts.keys())
     t_keys = set(t_counts.keys())
+
+    if not t_keys:
+        return EventScores(
+            macro_acc=float("nan"),
+            presence_f1=float("nan"),
+            count_acc=float("nan"),
+            hits=[],
+        )
 
     presence_f1 = _set_f1(s_keys, t_keys)
 
@@ -763,7 +781,8 @@ def _sym_risk_obs_acc(a: Dict[str, Any], b: Dict[str, Any]) -> float:
 def _consensus_pair_score(a: Dict[str, Any], b: Dict[str, Any]) -> float:
     gpair = _sym_global_slot_acc(a, b)
     rpair = _sym_risk_obs_acc(a, b)
-    return 0.5 * gpair + 0.5 * rpair
+    vals = [v for v in (gpair, rpair) if not np.isnan(v)]
+    return float(np.mean(vals)) if vals else 0.0
 
 
 # ----------------------------
@@ -777,6 +796,16 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--out", type=Path, default=BASE_DIR / "eval_out_road")
     ap.add_argument("--limit-videos", type=int, default=None)
     ap.add_argument("--model", action="append", default=None, help="Evaluate only specified model name(s). Can be repeated.")
+    ap.add_argument(
+        "--no-train",
+        action="store_true",
+        help="Evaluate only test-set items whose video_id begins with the held-out list.",
+    )
+    ap.add_argument(
+        "--all-train",
+        action="store_true",
+        help="Evaluate all test-set items except those whose video_id begins with the held-out list.",
+    )
     ap.add_argument(
         "--skip-missing-students",
         action="store_true",
@@ -792,17 +821,73 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run(args: argparse.Namespace) -> None:
+    if args.no_train and args.all_train:
+        raise SystemExit("Cannot use --no-train and --all-train together.")
+
+    heldout_prefixes = {
+        "329",
+        "330",
+        "331",
+        "333",
+        "334",
+        "335",
+        "336",
+        "337",
+        "338",
+        "339",
+        "340",
+        "341",
+        "342",
+        "343",
+        "345",
+        "346",
+        "347",
+        "353",
+        "354",
+        "355",
+    }
+
+    if args.no_train:
+        if args.out == BASE_DIR / "eval_out_road":
+            args.out = BASE_DIR / "eval_out_road_no_train"
+    elif args.all_train:
+        if args.out == BASE_DIR / "eval_out_road":
+            args.out = BASE_DIR / "eval_out_road_all_train"
+
     args.out.mkdir(parents=True, exist_ok=True)
     verbose = bool(args.verbose)
+    df_agg_out = args.out / "model_summary.csv"
 
     def log(msg: str) -> None:
         if verbose:
             print(msg)
 
+    existing_summary = None
+    existing_models: Set[str] = set()
+    if df_agg_out.exists():
+        try:
+            existing_summary = pd.read_csv(df_agg_out)
+            if "model" in existing_summary.columns:
+                existing_models = {m.replace("-", "_") for m in existing_summary["model"].dropna().astype(str)}
+            else:
+                log(f"Warning: existing summary missing 'model' column: {df_agg_out}")
+        except Exception as exc:
+            log(f"Warning: failed to read existing summary {df_agg_out}: {exc}")
+
     teacher_standards = discover_teacher_standards(args.results_gold)
+    if args.no_train:
+        teacher_standards = [
+            (vid, p) for (vid, p) in teacher_standards if any(vid.startswith(hp) for hp in heldout_prefixes)
+        ]
+    elif args.all_train:
+        teacher_standards = [
+            (vid, p) for (vid, p) in teacher_standards if not any(vid.startswith(hp) for hp in heldout_prefixes)
+        ]
     if args.limit_videos is not None:
         teacher_standards = teacher_standards[: args.limit_videos]
     log(f"Found {len(teacher_standards)} teacher standards in {args.results_gold}")
+
+    student_index = build_student_index(args.results, video_ids={vid for (vid, _p) in teacher_standards})
 
     rows: List[Dict[str, Any]] = []
     per_video_details: List[Dict[str, Any]] = []
@@ -826,11 +911,13 @@ def run(args: argparse.Namespace) -> None:
                 _consensus_pair_score,
             )
 
-        student_files = discover_student_files(args.results, video_id)
+        student_files = discover_student_files(args.results, video_id, index=student_index)
         if args.model:
             allowed = {m.replace("-", "_") for m in args.model}
             if "all" not in allowed:
                 student_files = [(m, p) for (m, p) in student_files if m.replace("-", "_") in allowed]
+        if existing_models:
+            student_files = [(m, p) for (m, p) in student_files if m.replace("-", "_") not in existing_models]
 
         if args.skip_missing_students and not student_files:
             continue
@@ -854,7 +941,7 @@ def run(args: argparse.Namespace) -> None:
             overall_risk_level_acc = None
             main_risk_factors_f1 = None
 
-            if student is not None:
+            if vrep.parse_ok and "error" not in student:
                 sec, _hits = score_global_and_sections(student, teacher)
                 global_slot = sec.global_macro_acc
                 road_slot = sec.road_composition_macro_acc
@@ -875,6 +962,7 @@ def run(args: argparse.Namespace) -> None:
                     "video": video_id,
                     "model": model_name,
                     "parse_ok": vrep.parse_ok,
+                    "has_error": ("error" in student) if isinstance(student, dict) else False,
                     "schema_ok": vrep.schema_ok,
                     "rule_ok": vrep.rule_ok,
                     "global_slot_macro_acc": global_slot,
@@ -908,6 +996,16 @@ def run(args: argparse.Namespace) -> None:
 
     df = pd.DataFrame(rows)
     df_out = args.out / "per_video_scores.csv"
+    if df_out.exists():
+        try:
+            df_existing = pd.read_csv(df_out)
+            if not df_existing.empty:
+                if df.empty:
+                    df = df_existing
+                else:
+                    df = pd.concat([df_existing, df], ignore_index=True)
+        except Exception as exc:
+            log(f"Warning: failed to read existing per-video scores {df_out}: {exc}")
     df.to_csv(df_out, index=False)
 
     # Aggregate per model
@@ -920,12 +1018,13 @@ def run(args: argparse.Namespace) -> None:
                 x = pd.to_numeric(g2[col], errors="coerce")
                 return float(x.mean()) if x.notna().any() else float("nan")
 
-            parse_rate = float(g2["parse_ok"].mean())
+            parse_rate = float((g2["parse_ok"] & ~g2["has_error"]).mean())
             schema_rate = float(g2["schema_ok"].mean())
             rule_rate = float(g2["rule_ok"].mean())
 
             global_mean = mean_or_nan("global_slot_macro_acc")
             risk_obs_mean = mean_or_nan("risk_obs_macro_acc")
+            effective_global = float(global_mean * schema_rate) if not np.isnan(global_mean) else float("nan")
 
             weighted_global = float("nan")
             weighted_risk_obs = float("nan")
@@ -941,6 +1040,7 @@ def run(args: argparse.Namespace) -> None:
                     "schema_rate": schema_rate,
                     "rule_rate": rule_rate,
                     "global_slot_macro_acc_mean": global_mean,
+                    "effective_global_slot_macro_acc_mean": effective_global,
                     "road_composition_slot_macro_acc_mean": mean_or_nan("road_composition_slot_macro_acc"),
                     "environmental_conditions_slot_macro_acc_mean": mean_or_nan("environmental_conditions_slot_macro_acc"),
                     "traffic_status_macro_acc_mean": mean_or_nan("traffic_status_macro_acc"),
@@ -963,14 +1063,26 @@ def run(args: argparse.Namespace) -> None:
             ascending=False,
         )
 
-    df_agg_out = args.out / "model_summary.csv"
+    if existing_summary is not None and not existing_summary.empty:
+        if df_agg.empty:
+            df_agg = existing_summary
+        else:
+            df_agg = pd.concat([existing_summary, df_agg], ignore_index=True)
     df_agg.to_csv(df_agg_out, index=False)
 
-    (args.out / "details.json").write_text(json.dumps(per_video_details, indent=2), encoding="utf-8")
+    details_path = args.out / "details.json"
+    if details_path.exists():
+        try:
+            existing_details = json.loads(details_path.read_text(encoding="utf-8"))
+            if isinstance(existing_details, list) and existing_details:
+                per_video_details = existing_details + per_video_details
+        except Exception as exc:
+            log(f"Warning: failed to read existing details {details_path}: {exc}")
+    details_path.write_text(json.dumps(per_video_details, indent=2), encoding="utf-8")
 
     print(f"Wrote: {df_out}")
     print(f"Wrote: {df_agg_out}")
-    print(f"Wrote: {args.out / 'details.json'}")
+    print(f"Wrote: {details_path}")
 
 
 def main() -> None:
