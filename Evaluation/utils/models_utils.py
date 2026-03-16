@@ -21,6 +21,10 @@ QWEN_32B_FT_LLM_REPO = os.environ.get("QWEN_32B_FT_LLM_REPO", "/mnt/Repo/VLM_ft/
 QWEN_32B_FT_BOTH_REPO = os.environ.get("QWEN_32B_FT_BOTH_REPO", "/mnt/Repo/VLM_ft/models/Qwen3-32B_both")
 QWEN_32B_FT_LLM_1K_REPO = os.environ.get("QWEN_32B_FT_LLM_1K_REPO", "/mnt/Repo/VLM_ft/models/Qwen3-32B_llm_1k")
 QWEN_32B_FT_BOTH_1K_REPO = os.environ.get("QWEN_32B_FT_BOTH_1K_REPO", "/mnt/Repo/VLM_ft/models/Qwen3-32B_both_1k")
+QWEN3_5_LORAFT_9B_17K_REPO = os.environ.get(
+    "QWEN3_5_LORAFT_9B_17K_REPO",
+    "/opt/models/Qwen3.5_FT/Qwen3.5-9B_17k_merged",
+)
 
 COSMOS_REASON1_REPO = os.environ.get("COSMOS_REASON1_REPO", "nvidia/Cosmos-Reason1-7B")
 COSMOS_REASON2_2B_REPO = os.environ.get("COSMOS_REASON2_2B_REPO", "nvidia/Cosmos-Reason2-2B")
@@ -116,6 +120,7 @@ MODEL_CHOICES: Tuple[str, ...] = (
     # "qwen-32B-FT-both",
     "qwen-32B",
     # "qwen3.5-122B",
+    "qwen3.5-LoRAFT_17k-9B",
     # "qwen-32B-FT-both-1k",
     # "qwen-32B-FT-llm-1k",
     # "qwen-8B-FT-llm",
@@ -138,7 +143,7 @@ MODEL_CHOICES: Tuple[str, ...] = (
     "cosmos2-reason-fullFT_80k-8B",
     "cosmos2-reason-fullFT_100k-8B",
     # "cosmos2-reason-LoRAFT_17k-2B",
-    # "cosmos2-reason-LoRAFT_17k-8B",
+    "cosmos2-reason-LoRAFT_17k-8B",
     # "cosmos2-reason-LoRAFT-env-2B",
     "cosmos2-reason-LoRAFT-env-8B",
     # "cosmos2-reason-LoRAFT-people-2B",
@@ -157,6 +162,8 @@ def served_name_for(model_key: str) -> str:
         return os.environ.get("QWEN_VLLM_MODEL_NAME_32B", "Qwen3-VL-32B-Thinking")
     if model_key == "qwen3.5-122B":
         return os.environ.get("QWEN_VLLM_MODEL_NAME_122B", "Qwen3.5-122B-A10B")
+    if model_key == "qwen3.5-LoRAFT_17k-9B":
+        return os.environ.get("QWEN3_5_LORAFT_9B_17k_NAME", "Qwen3.5-LoRAFT-17k_9B")
     if model_key == "qwen-8B":
         return os.environ.get("QWEN_VLLM_MODEL_NAME_8B", "Qwen3-VL-8B-Thinking")
     if model_key == "qwen-2B":
@@ -235,6 +242,8 @@ def resolve_model_repo(model_key: str) -> str:
         return QWEN_32B_REPO
     if model_key == "qwen3.5-122B":
         return QWEN_122B_REPO
+    if model_key == "qwen3.5-LoRAFT_17k-9B":
+        return QWEN3_5_LORAFT_9B_17K_REPO
     if model_key == "qwen-8B":
         return QWEN_8B_REPO
     if model_key == "qwen-2B":

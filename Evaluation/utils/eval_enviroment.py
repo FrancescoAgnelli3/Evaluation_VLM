@@ -38,7 +38,7 @@ from utils.eval_common import (
 )
 
 BASE_DIR = Path(__file__).resolve().parents[1]
-TASK_NAME = "industry"
+TASK_NAME = "environment"
 GT_DIR = f"/opt/dataset/ds_{TASK_NAME}/test_dataset_json"
 
 

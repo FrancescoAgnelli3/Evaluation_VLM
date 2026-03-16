@@ -28,10 +28,10 @@ from qwen_vl_utils import process_vision_info
 
 
 BASE_DIR = Path(__file__).resolve().parent
-VIDEO_DIR = "/opt/dataset/train_dataset_17k"
-JSON_DIR = "/opt/dataset/train_dataset_17k_json"
+VIDEO_DIR = "/opt/dataset/train_dataset_100k"
+JSON_DIR = "/opt/dataset/train_dataset_100k_json"
 PROMPT_DIR = BASE_DIR / "prompts/prompt_json.txt"
-OUTPUT_DIR = "/opt/models/Qwen/dataset_17k/"
+OUTPUT_DIR = "/opt/models/Qwen/dataset_100k_122b/"
 
 
 # -------------------------

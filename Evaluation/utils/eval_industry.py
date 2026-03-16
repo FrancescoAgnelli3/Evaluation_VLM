@@ -71,7 +71,7 @@ from utils.eval_common import (
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 TASK_NAME = "industry"
-GT_DIR = f"/opt/dataset/ds_{TASK_NAME}/test_dataset_json"
+GT_DIR = f"/opt/dataset/ds_{TASK_NAME}_ripulito/test_dataset_json"
 
 
 # ----------------------------

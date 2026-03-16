@@ -442,7 +442,8 @@ class VLLMClient:
         force_json_mode: bool,
         extra_system: Optional[str] = None,
     ) -> Optional[InferenceResult]:
-        safe_path = _maybe_reencode_video(video_path)
+        # safe_path = _maybe_reencode_video(video_path)
+        safe_path=video_path
         if VIDEO_USE_DATA_URL:
             video_ref = _file_to_data_url(safe_path)
         else:

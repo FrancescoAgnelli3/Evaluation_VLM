@@ -397,7 +397,7 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--per_device_train_batch_size", type=int, default=1)
     ap.add_argument("--gradient_accumulation_steps", type=int, default=16)
     ap.add_argument("--learning_rate", type=float, default=2e-4)
-    ap.add_argument("--num_train_epochs", type=float, default=1.0)
+    ap.add_argument("--num_train_epochs", type=float, default=3.0)
     ap.add_argument("--warmup_ratio", type=float, default=0.03)
     ap.add_argument("--weight_decay", type=float, default=0.0)
 

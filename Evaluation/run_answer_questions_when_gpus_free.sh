@@ -35,13 +35,6 @@ done
 
 echo "GPUs free for ${IDLE_SECONDS_REQUIRED}s. Launching..."
 python "$SCRIPT" \
-  --model qwen-8B \
-  --model cosmos2-2B \
-  --model cosmos2-8B \
-  --model cosmos2-reason-fullFT_17k-8B \
-  --model qwen-2B \
-  --model cosmos2-reason-fullFT_57k-8B \
-  --model cosmos2-reason-fullFT_40k-8B \
-  --model cosmos2-reason-fullFT_80k-8B \
-  --model cosmos2-reason-fullFT_100k-8B \
-  --task road
+  --model qwen-32B \
+  --model qwen3.5-LoRAFT_17k-9B \
+  --task road \

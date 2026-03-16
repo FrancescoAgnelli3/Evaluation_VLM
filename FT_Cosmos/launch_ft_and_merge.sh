@@ -41,29 +41,29 @@ run_case() {
 }
 
 # Cases
-# run_case \
-#   "1) environment | 2B" \
-#   "nvidia/Cosmos-Reason2-2B" \
-#   "/opt/dataset/ds_environment/train_dataset" \
-#   "/opt/dataset/ds_environment/train_dataset_json" \
-#   "environment" \
-#   "/opt/models/Cosmos-Reason2-FT/2B/LoRA/ds_environment"
+run_case \
+  "1) environment | 2B" \
+  "nvidia/Cosmos-Reason2-2B" \
+  "/opt/dataset/ds_environment/train_dataset" \
+  "/opt/dataset/ds_environment/train_dataset_json" \
+  "environment" \
+  "/opt/models/Cosmos-Reason2-FT/2B/LoRA/ds_environment"
 
-# run_case \
-#   "2) environment | 8B" \
-#   "nvidia/Cosmos-Reason2-8B" \
-#   "/opt/dataset/ds_environment/train_dataset" \
-#   "/opt/dataset/ds_environment/train_dataset_json" \
-#   "environment" \
-#   "/opt/models/Cosmos-Reason2-FT/8B/LoRA/ds_environment"
+run_case \
+  "2) environment | 8B" \
+  "nvidia/Cosmos-Reason2-8B" \
+  "/opt/dataset/ds_environment/train_dataset" \
+  "/opt/dataset/ds_environment/train_dataset_json" \
+  "environment" \
+  "/opt/models/Cosmos-Reason2-FT/8B/LoRA/ds_environment"
 
-# run_case \
-#   "3) industry | 2B" \
-#   "nvidia/Cosmos-Reason2-2B" \
-#   "/opt/dataset/ds_industry/train_dataset" \
-#   "/opt/dataset/ds_industry/train_dataset_json" \
-#   "industry" \
-#   "/opt/models/Cosmos-Reason2-FT/2B/LoRA/ds_industry"
+run_case \
+  "3) industry | 2B" \
+  "nvidia/Cosmos-Reason2-2B" \
+  "/opt/dataset/ds_industry/train_dataset" \
+  "/opt/dataset/ds_industry/train_dataset_json" \
+  "industry" \
+  "/opt/models/Cosmos-Reason2-FT/2B/LoRA/ds_industry_ripulito"
 
 run_case \
   "4) industry | 8B (json path per request)" \
@@ -71,15 +71,15 @@ run_case \
   "/opt/dataset/ds_industry/train_dataset" \
   "/opt/dataset/ds_industry/train_dataset_json" \
   "industry" \
-  "/opt/models/Cosmos-Reason2-FT/8B/LoRA/ds_industry"
+  "/opt/models/Cosmos-Reason2-FT/8B/LoRA/ds_industry_ripulito"
 
-# run_case \
-#   "5) people | 2B" \
-#   "nvidia/Cosmos-Reason2-2B" \
-#   "/opt/dataset/ds_people/train_dataset" \
-#   "/opt/dataset/ds_people/train_dataset_json" \
-#   "people" \
-#   "/opt/models/Cosmos-Reason2-FT/2B/LoRA/ds_people"
+run_case \
+  "5) people | 2B" \
+  "nvidia/Cosmos-Reason2-2B" \
+  "/opt/dataset/ds_people/train_dataset" \
+  "/opt/dataset/ds_people/train_dataset_json" \
+  "people" \
+  "/opt/models/Cosmos-Reason2-FT/2B/LoRA/ds_people_ripulito"
 
 run_case \
   "6) people | 8B" \
@@ -87,5 +87,5 @@ run_case \
   "/opt/dataset/ds_people/train_dataset" \
   "/opt/dataset/ds_people/train_dataset_json" \
   "people" \
-  "/opt/models/Cosmos-Reason2-FT/8B/LoRA/ds_people"
+  "/opt/models/Cosmos-Reason2-FT/8B/LoRA/ds_people_ripulito"
 

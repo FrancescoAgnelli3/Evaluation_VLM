@@ -592,7 +592,19 @@ class ValidationReport:
 def _check_enum(value: Any, allowed: set, tag: str, errors: List[str]) -> None:
     if value is None:
         errors.append(f"missing_enum:{tag}")
-    elif value not in allowed:
+        return
+
+    # Accept list/tuple/set by checking each element.
+    if isinstance(value, (list, tuple, set)):
+        if not value:
+            errors.append(f"bad_enum:{tag}={value}")
+            return
+        for v in value:
+            if v not in allowed:
+                errors.append(f"bad_enum:{tag}={v}")
+        return
+
+    if value not in allowed:
         errors.append(f"bad_enum:{tag}={value}")
 
 
@@ -862,17 +874,8 @@ def run(args: argparse.Namespace) -> None:
         if verbose:
             print(msg)
 
-    existing_summary = None
-    existing_models: Set[str] = set()
     if df_agg_out.exists():
-        try:
-            existing_summary = pd.read_csv(df_agg_out)
-            if "model" in existing_summary.columns:
-                existing_models = {m.replace("-", "_") for m in existing_summary["model"].dropna().astype(str)}
-            else:
-                log(f"Warning: existing summary missing 'model' column: {df_agg_out}")
-        except Exception as exc:
-            log(f"Warning: failed to read existing summary {df_agg_out}: {exc}")
+        log(f"Overwriting existing summary: {df_agg_out}")
 
     teacher_standards = discover_teacher_standards(args.results_gold)
     if args.no_train:
@@ -916,9 +919,6 @@ def run(args: argparse.Namespace) -> None:
             allowed = {m.replace("-", "_") for m in args.model}
             if "all" not in allowed:
                 student_files = [(m, p) for (m, p) in student_files if m.replace("-", "_") in allowed]
-        if existing_models:
-            student_files = [(m, p) for (m, p) in student_files if m.replace("-", "_") not in existing_models]
-
         if args.skip_missing_students and not student_files:
             continue
 
@@ -997,15 +997,7 @@ def run(args: argparse.Namespace) -> None:
     df = pd.DataFrame(rows)
     df_out = args.out / "per_video_scores.csv"
     if df_out.exists():
-        try:
-            df_existing = pd.read_csv(df_out)
-            if not df_existing.empty:
-                if df.empty:
-                    df = df_existing
-                else:
-                    df = pd.concat([df_existing, df], ignore_index=True)
-        except Exception as exc:
-            log(f"Warning: failed to read existing per-video scores {df_out}: {exc}")
+        log(f"Overwriting existing per-video scores: {df_out}")
     df.to_csv(df_out, index=False)
 
     # Aggregate per model
@@ -1063,21 +1055,11 @@ def run(args: argparse.Namespace) -> None:
             ascending=False,
         )
 
-    if existing_summary is not None and not existing_summary.empty:
-        if df_agg.empty:
-            df_agg = existing_summary
-        else:
-            df_agg = pd.concat([existing_summary, df_agg], ignore_index=True)
     df_agg.to_csv(df_agg_out, index=False)
 
     details_path = args.out / "details.json"
     if details_path.exists():
-        try:
-            existing_details = json.loads(details_path.read_text(encoding="utf-8"))
-            if isinstance(existing_details, list) and existing_details:
-                per_video_details = existing_details + per_video_details
-        except Exception as exc:
-            log(f"Warning: failed to read existing details {details_path}: {exc}")
+        log(f"Overwriting existing details: {details_path}")
     details_path.write_text(json.dumps(per_video_details, indent=2), encoding="utf-8")
 
     print(f"Wrote: {df_out}")
