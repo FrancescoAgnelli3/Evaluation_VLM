@@ -25,6 +25,18 @@ QWEN3_5_LORAFT_9B_17K_REPO = os.environ.get(
     "QWEN3_5_LORAFT_9B_17K_REPO",
     "/opt/models/Qwen3.5_FT/Qwen3.5-9B_17k_merged",
 )
+QWEN3_5_LORAFT_9B_PEOPLE_REPO = os.environ.get(
+    "QWEN3_5_LORAFT_9B_PEOPLE_REPO",
+    "/opt/models/Qwen3.5_FT/Qwen3.5-9B_people",
+)
+QWEN3_5_LORAFT_9B_INDUSTRY_REPO = os.environ.get(
+    "QWEN3_5_LORAFT_9B_INDUSTRY_REPO",
+    "/opt/models/Qwen3.5_FT/Qwen3.5-9B_industry",
+)
+QWEN3_5_LORAFT_9B_ENVIRONMENT_REPO = os.environ.get(
+    "QWEN3_5_LORAFT_9B_ENVIRONMENT_REPO",
+    "/opt/models/Qwen3.5_FT/Qwen3.5-environment",
+)
 
 COSMOS_REASON1_REPO = os.environ.get("COSMOS_REASON1_REPO", "nvidia/Cosmos-Reason1-7B")
 COSMOS_REASON2_2B_REPO = os.environ.get("COSMOS_REASON2_2B_REPO", "nvidia/Cosmos-Reason2-2B")
@@ -103,7 +115,7 @@ COSMOS_REASON2_LORAFT_PEOPLE_2B_REPO = os.environ.get(
 )
 COSMOS_REASON2_LORAFT_PEOPLE_8B_REPO = os.environ.get(
     "COSMOS_REASON2_LORAFT_PEOPLE_8B_REPO",
-    "/opt/models/Cosmos-Reason2-FT/8B/LoRA/ds_people/merged",
+    "/opt/models/Cosmos-Reason2-FT/8B/LoRA/ds_people_ripulito/merged",
 )
 COSMOS_REASON2_LORAFT_INDUSTRY_2B_REPO = os.environ.get(
     "COSMOS_REASON2_LORAFT_INDUSTRY_2B_REPO",
@@ -111,7 +123,7 @@ COSMOS_REASON2_LORAFT_INDUSTRY_2B_REPO = os.environ.get(
 )
 COSMOS_REASON2_LORAFT_INDUSTRY_8B_REPO = os.environ.get(
     "COSMOS_REASON2_LORAFT_INDUSTRY_8B_REPO",
-    "/opt/models/Cosmos-Reason2-FT/8B/LoRA/ds_industry/merged",
+    "/opt/models/Cosmos-Reason2-FT/8B/LoRA/ds_industry_ripulito/merged",
 )
 
 MODEL_CHOICES: Tuple[str, ...] = (
@@ -121,6 +133,9 @@ MODEL_CHOICES: Tuple[str, ...] = (
     "qwen-32B",
     # "qwen3.5-122B",
     "qwen3.5-LoRAFT_17k-9B",
+    "qwen3.5-LoRAFT-people-9B",
+    "qwen3.5-LoRAFT-industry-9B",
+    "qwen3.5-LoRAFT-environment-9B",
     # "qwen-32B-FT-both-1k",
     # "qwen-32B-FT-llm-1k",
     # "qwen-8B-FT-llm",
@@ -164,6 +179,12 @@ def served_name_for(model_key: str) -> str:
         return os.environ.get("QWEN_VLLM_MODEL_NAME_122B", "Qwen3.5-122B-A10B")
     if model_key == "qwen3.5-LoRAFT_17k-9B":
         return os.environ.get("QWEN3_5_LORAFT_9B_17k_NAME", "Qwen3.5-LoRAFT-17k_9B")
+    if model_key == "qwen3.5-LoRAFT-people-9B":
+        return os.environ.get("QWEN3_5_LORAFT_9B_PEOPLE_NAME", "Qwen3.5-LoRAFT-People-9B")
+    if model_key == "qwen3.5-LoRAFT-industry-9B":
+        return os.environ.get("QWEN3_5_LORAFT_9B_INDUSTRY_NAME", "Qwen3.5-LoRAFT-Industry-9B")
+    if model_key == "qwen3.5-LoRAFT-environment-9B":
+        return os.environ.get("QWEN3_5_LORAFT_9B_ENVIRONMENT_NAME", "Qwen3.5-LoRAFT-Environment-9B")
     if model_key == "qwen-8B":
         return os.environ.get("QWEN_VLLM_MODEL_NAME_8B", "Qwen3-VL-8B-Thinking")
     if model_key == "qwen-2B":
@@ -244,6 +265,12 @@ def resolve_model_repo(model_key: str) -> str:
         return QWEN_122B_REPO
     if model_key == "qwen3.5-LoRAFT_17k-9B":
         return QWEN3_5_LORAFT_9B_17K_REPO
+    if model_key == "qwen3.5-LoRAFT-people-9B":
+        return QWEN3_5_LORAFT_9B_PEOPLE_REPO
+    if model_key == "qwen3.5-LoRAFT-industry-9B":
+        return QWEN3_5_LORAFT_9B_INDUSTRY_REPO
+    if model_key == "qwen3.5-LoRAFT-environment-9B":
+        return QWEN3_5_LORAFT_9B_ENVIRONMENT_REPO
     if model_key == "qwen-8B":
         return QWEN_8B_REPO
     if model_key == "qwen-2B":

@@ -6,6 +6,39 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+IDLE_SECONDS_REQUIRED=200
+POLL_INTERVAL=1
+
+is_all_gpus_free() {
+  local lines
+  lines=$(nvidia-smi --query-gpu=utilization.gpu,memory.used --format=csv,noheader,nounits)
+  while IFS=',' read -r util mem; do
+    util=$(echo "$util" | xargs)
+    mem=$(echo "$mem" | xargs)
+    if [[ "$util" != "0" ]] || [[ "$mem" != "0" ]]; then
+      return 1
+    fi
+  done <<< "$lines"
+  return 0
+}
+
+idle_for=0
+echo "Waiting for all GPUs to be free for ${IDLE_SECONDS_REQUIRED}s..."
+
+while true; do
+  if is_all_gpus_free; then
+    idle_for=$((idle_for + POLL_INTERVAL))
+    if (( idle_for >= IDLE_SECONDS_REQUIRED )); then
+      break
+    fi
+  else
+    idle_for=0
+  fi
+  sleep "$POLL_INTERVAL"
+done
+
+echo "GPUs free for ${IDLE_SECONDS_REQUIRED}s. Launching..."
+
 run_case() {
   local case_name="$1"
   local model_id="$2"
@@ -41,29 +74,29 @@ run_case() {
 }
 
 # Cases
-run_case \
-  "1) environment | 2B" \
-  "nvidia/Cosmos-Reason2-2B" \
-  "/opt/dataset/ds_environment/train_dataset" \
-  "/opt/dataset/ds_environment/train_dataset_json" \
-  "environment" \
-  "/opt/models/Cosmos-Reason2-FT/2B/LoRA/ds_environment"
+# run_case \
+#   "1) environment | 2B" \
+#   "nvidia/Cosmos-Reason2-2B" \
+#   "/opt/dataset/ds_environment/train_dataset" \
+#   "/opt/dataset/ds_environment/train_dataset_json" \
+#   "environment" \
+#   "/opt/models/Cosmos-Reason2-FT/2B/LoRA/ds_environment"
 
-run_case \
-  "2) environment | 8B" \
-  "nvidia/Cosmos-Reason2-8B" \
-  "/opt/dataset/ds_environment/train_dataset" \
-  "/opt/dataset/ds_environment/train_dataset_json" \
-  "environment" \
-  "/opt/models/Cosmos-Reason2-FT/8B/LoRA/ds_environment"
+# run_case \
+#   "2) environment | 8B" \
+#   "nvidia/Cosmos-Reason2-8B" \
+#   "/opt/dataset/ds_environment/train_dataset" \
+#   "/opt/dataset/ds_environment/train_dataset_json" \
+#   "environment" \
+#   "/opt/models/Cosmos-Reason2-FT/8B/LoRA/ds_environment"
 
-run_case \
-  "3) industry | 2B" \
-  "nvidia/Cosmos-Reason2-2B" \
-  "/opt/dataset/ds_industry/train_dataset" \
-  "/opt/dataset/ds_industry/train_dataset_json" \
-  "industry" \
-  "/opt/models/Cosmos-Reason2-FT/2B/LoRA/ds_industry_ripulito"
+# run_case \
+#   "3) industry | 2B" \
+#   "nvidia/Cosmos-Reason2-2B" \
+#   "/opt/dataset/ds_industry/train_dataset" \
+#   "/opt/dataset/ds_industry/train_dataset_json" \
+#   "industry" \
+#   "/opt/models/Cosmos-Reason2-FT/2B/LoRA/ds_industry_ripulito"
 
 run_case \
   "4) industry | 8B (json path per request)" \
@@ -73,13 +106,13 @@ run_case \
   "industry" \
   "/opt/models/Cosmos-Reason2-FT/8B/LoRA/ds_industry_ripulito"
 
-run_case \
-  "5) people | 2B" \
-  "nvidia/Cosmos-Reason2-2B" \
-  "/opt/dataset/ds_people/train_dataset" \
-  "/opt/dataset/ds_people/train_dataset_json" \
-  "people" \
-  "/opt/models/Cosmos-Reason2-FT/2B/LoRA/ds_people_ripulito"
+# run_case \
+#   "5) people | 2B" \
+#   "nvidia/Cosmos-Reason2-2B" \
+#   "/opt/dataset/ds_people/train_dataset" \
+#   "/opt/dataset/ds_people/train_dataset_json" \
+#   "people" \
+#   "/opt/models/Cosmos-Reason2-FT/2B/LoRA/ds_people_ripulito"
 
 run_case \
   "6) people | 8B" \
@@ -88,4 +121,3 @@ run_case \
   "/opt/dataset/ds_people/train_dataset_json" \
   "people" \
   "/opt/models/Cosmos-Reason2-FT/8B/LoRA/ds_people_ripulito"
-

@@ -35,6 +35,9 @@ from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from trl import SFTConfig, SFTTrainer
 from qwen_vl_utils import process_vision_info
 
+# Prefer torchcodec for video decoding (qwen-vl-utils honors this env var).
+os.environ.setdefault("FORCE_QWENVL_VIDEO_READER", "torchcodec")
+
 # -------------------------
 # Paths / defaults
 # -------------------------

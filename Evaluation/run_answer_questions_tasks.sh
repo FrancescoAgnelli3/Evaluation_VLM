@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT="${ROOT_DIR}/answer_questions.py"
-IDLE_SECONDS_REQUIRED=200
+IDLE_SECONDS_REQUIRED=0
 POLL_INTERVAL=1
 
 is_all_gpus_free() {
@@ -58,8 +58,9 @@ for task in "${TASKS[@]}"; do
     (*) echo "Unknown task: ${task}" >&2; exit 1 ;;
   esac
 
-  python3 "$SCRIPT" --task "$task" --model "cosmos2-reason-LoRAFT-${lora_suffix}-2B"
-  python3 "$SCRIPT" --task "$task" --model "cosmos2-reason-LoRAFT-${lora_suffix}-8B"
+  # python3 "$SCRIPT" --task "$task" --model "cosmos2-reason-LoRAFT-${lora_suffix}-2B"
+  # python3 "$SCRIPT" --task "$task" --model "cosmos2-reason-LoRAFT-${lora_suffix}-8B"
+  python3 "$SCRIPT" --task "$task" --model "qwen3.5-LoRAFT-${lora_suffix}-9B"
   
   # for model in "${BASE_MODELS[@]}"; do
   #   python3 "$SCRIPT" --task "$task" --model "$model"
