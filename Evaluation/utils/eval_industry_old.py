@@ -68,10 +68,14 @@ from utils.eval_common import (
     safe_float,
     weighted_mean,
 )
+from utils.latex_table import write_latex_table
+from utils.run_paths import task_eval_dir, task_results_dir
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 TASK_NAME = "industry"
 GT_DIR = f"/opt/dataset/ds_{TASK_NAME}/test_dataset_json"
+DEFAULT_RESULTS_DIR = task_results_dir(TASK_NAME)
+DEFAULT_OUT_DIR = task_eval_dir(TASK_NAME)
 
 
 # ----------------------------
@@ -540,8 +544,8 @@ def _consensus_pair_score(a: Dict[str, Any], b: Dict[str, Any]) -> float:
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     ap.add_argument("--results-gold", type=Path, default=GT_DIR)
-    ap.add_argument("--results", type=Path, default=BASE_DIR / "results_industry")
-    ap.add_argument("--out", type=Path, default=BASE_DIR / "eval_out_industry")
+    ap.add_argument("--results", type=Path, default=DEFAULT_RESULTS_DIR)
+    ap.add_argument("--out", type=Path, default=DEFAULT_OUT_DIR)
     ap.add_argument("--limit-videos", type=int, default=None)
     ap.add_argument("--model", action="append", default=None, help="Evaluate only specified model name(s). Can be repeated.")
     ap.add_argument(
@@ -723,12 +727,15 @@ def run(args: argparse.Namespace) -> None:
 
     df_agg_out = args.out / "model_summary.csv"
     df_agg.to_csv(df_agg_out, index=False)
+    latex_out = args.out / "model_summary_latex.txt"
+    write_latex_table(df_agg, latex_out)
 
     (args.out / "details.json").write_text(json.dumps(per_video_details, indent=2), encoding="utf-8")
 
     print(f"Wrote: {df_out}")
     print(f"Wrote: {df_agg_out}")
     print(f"Wrote: {args.out / 'details.json'}")
+    print(f"Wrote: {latex_out}")
 
 
 def main() -> None:

@@ -1,7 +1,7 @@
-/Evaluation/results_*/*
-/Evaluation/eval_out_*/*
+/Evaluation/artifacts/
 */pycache__/
 # Python
 __pycache__/
 *.py[cod]
 /dataset/*
+/out_27B_full_17k/

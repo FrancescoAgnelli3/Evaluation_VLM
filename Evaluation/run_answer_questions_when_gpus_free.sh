@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT="/home/fa/projects/Evaluation_VLM/Evaluation/answer_questions.py"
-IDLE_SECONDS_REQUIRED=200
+IDLE_SECONDS_REQUIRED=0
 POLL_INTERVAL=1
 
 is_all_gpus_free() {
@@ -35,6 +35,5 @@ done
 
 echo "GPUs free for ${IDLE_SECONDS_REQUIRED}s. Launching..."
 python "$SCRIPT" \
-  --model qwen-32B \
-  --model qwen3.5-LoRAFT_17k-9B \
+  --model qwen3.5-FT_40k-27B \
   --task road \

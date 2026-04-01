@@ -22,13 +22,6 @@ Changes vs previous rewrite
 
 3) Keeps validation (parse_ok / schema_ok / rule_ok) best-effort.
 
-Teacher-run consensus (optional)
---------------------------------
-If --include-teacher-runs is enabled, computes per-video consensus weights from teacher runs only,
-and reports weighted means for:
-  - weight_global_slot_macro_acc_mean
-  - weight_risk_obs_macro_acc_mean
-
 Dependencies:
   pip install numpy pandas
 """
@@ -56,12 +49,16 @@ from utils.eval_common import (
     is_int_or_unknown,
     read_json,
     safe_float,
-    weighted_mean,
 )
+from utils.latex_table import write_latex_table
+from utils.model_sort import format_model_name, sort_model_summary
+from utils.run_paths import task_eval_dir, task_results_dir
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 TASK_NAME = "road"
 GT_DIR = f"/opt/dataset/test_dataset_json"
+DEFAULT_RESULTS_DIR = task_results_dir(TASK_NAME)
+DEFAULT_OUT_DIR = task_eval_dir(TASK_NAME)
 
 
 # ----------------------------
@@ -590,6 +587,12 @@ class ValidationReport:
 
 
 def _check_enum(value: Any, allowed: set, tag: str, errors: List[str]) -> None:
+    def _in_allowed(v: Any) -> bool:
+        try:
+            return v in allowed
+        except TypeError:
+            return False
+
     if value is None:
         errors.append(f"missing_enum:{tag}")
         return
@@ -600,11 +603,11 @@ def _check_enum(value: Any, allowed: set, tag: str, errors: List[str]) -> None:
             errors.append(f"bad_enum:{tag}={value}")
             return
         for v in value:
-            if v not in allowed:
+            if not _in_allowed(v):
                 errors.append(f"bad_enum:{tag}={v}")
         return
 
-    if value not in allowed:
+    if not _in_allowed(value):
         errors.append(f"bad_enum:{tag}={value}")
 
 
@@ -804,8 +807,8 @@ def _consensus_pair_score(a: Dict[str, Any], b: Dict[str, Any]) -> float:
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     ap.add_argument("--results-gold", type=Path, default=GT_DIR)
-    ap.add_argument("--results", type=Path, default=BASE_DIR / "results_road")
-    ap.add_argument("--out", type=Path, default=BASE_DIR / "eval_out_road")
+    ap.add_argument("--results", type=Path, default=DEFAULT_RESULTS_DIR)
+    ap.add_argument("--out", type=Path, default=DEFAULT_OUT_DIR)
     ap.add_argument("--limit-videos", type=int, default=None)
     ap.add_argument("--model", action="append", default=None, help="Evaluate only specified model name(s). Can be repeated.")
     ap.add_argument(
@@ -833,6 +836,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run(args: argparse.Namespace) -> None:
+    if args.results == DEFAULT_RESULTS_DIR and not args.results.exists():
+        legacy_results = BASE_DIR / "results_road"
+        if legacy_results.exists():
+            args.results = legacy_results
     if args.no_train and args.all_train:
         raise SystemExit("Cannot use --no-train and --all-train together.")
 
@@ -860,11 +867,11 @@ def run(args: argparse.Namespace) -> None:
     }
 
     if args.no_train:
-        if args.out == BASE_DIR / "eval_out_road":
-            args.out = BASE_DIR / "eval_out_road_no_train"
+        if args.out == DEFAULT_OUT_DIR:
+            args.out = DEFAULT_OUT_DIR / "no_train"
     elif args.all_train:
-        if args.out == BASE_DIR / "eval_out_road":
-            args.out = BASE_DIR / "eval_out_road_all_train"
+        if args.out == DEFAULT_OUT_DIR:
+            args.out = DEFAULT_OUT_DIR / "all_train"
 
     args.out.mkdir(parents=True, exist_ok=True)
     verbose = bool(args.verbose)
@@ -921,11 +928,16 @@ def run(args: argparse.Namespace) -> None:
                 student_files = [(m, p) for (m, p) in student_files if m.replace("-", "_") in allowed]
         if args.skip_missing_students and not student_files:
             continue
-
         log(f"Video={video_id}: found {len(student_files)} student outputs (consensus_weight={consensus_weight:.3f})")
 
         for model_name, student_path in student_files:
             student = read_json(student_path)
+            if student is None or not isinstance(student, dict):
+                log(f"Skipping student (parse failed or not object): {student_path}")
+                continue
+            if "error" in student:
+                log(f"Skipping student (error present): {student_path}")
+                continue
             vrep = validate_struct(student)
 
             global_slot = None
@@ -941,7 +953,7 @@ def run(args: argparse.Namespace) -> None:
             overall_risk_level_acc = None
             main_risk_factors_f1 = None
 
-            if vrep.parse_ok and "error" not in student:
+            if vrep.parse_ok:
                 sec, _hits = score_global_and_sections(student, teacher)
                 global_slot = sec.global_macro_acc
                 road_slot = sec.road_composition_macro_acc
@@ -962,7 +974,7 @@ def run(args: argparse.Namespace) -> None:
                     "video": video_id,
                     "model": model_name,
                     "parse_ok": vrep.parse_ok,
-                    "has_error": ("error" in student) if isinstance(student, dict) else False,
+                    "has_error": False,
                     "schema_ok": vrep.schema_ok,
                     "rule_ok": vrep.rule_ok,
                     "global_slot_macro_acc": global_slot,
@@ -996,8 +1008,6 @@ def run(args: argparse.Namespace) -> None:
 
     df = pd.DataFrame(rows)
     df_out = args.out / "per_video_scores.csv"
-    if df_out.exists():
-        log(f"Overwriting existing per-video scores: {df_out}")
     df.to_csv(df_out, index=False)
 
     # Aggregate per model
@@ -1018,16 +1028,9 @@ def run(args: argparse.Namespace) -> None:
             risk_obs_mean = mean_or_nan("risk_obs_macro_acc")
             effective_global = float(global_mean * schema_rate) if not np.isnan(global_mean) else float("nan")
 
-            weighted_global = float("nan")
-            weighted_risk_obs = float("nan")
-            if args.include_teacher_runs:
-                weighted_global = weighted_mean(g2["global_slot_macro_acc"], g2["teacher_consensus_weight"])
-                weighted_risk_obs = weighted_mean(g2["risk_obs_macro_acc"], g2["teacher_consensus_weight"])
-
             agg_rows.append(
                 {
                     "model": model_name,
-                    "n_videos": int(len(g2)),
                     "parse_rate": parse_rate,
                     "schema_rate": schema_rate,
                     "rule_rate": rule_rate,
@@ -1039,32 +1042,27 @@ def run(args: argparse.Namespace) -> None:
                     "vehicle_events_macro_acc_mean": mean_or_nan("vehicle_events_macro_acc"),
                     "pedestrian_events_macro_acc_mean": mean_or_nan("pedestrian_events_macro_acc"),
                     "risk_obs_macro_acc_mean": risk_obs_mean,
-                    "risk_vehicle_ids_f1_mean": mean_or_nan("risk_vehicle_ids_f1"),
-                    "risk_pairs_f1_mean": mean_or_nan("risk_pairs_f1"),
                     "overall_risk_level_acc_mean": mean_or_nan("overall_risk_level_acc"),
                     "main_risk_factors_f1_mean": mean_or_nan("main_risk_factors_f1"),
-                    "weight_global_slot_macro_acc_mean": weighted_global,
-                    "weight_risk_obs_macro_acc_mean": weighted_risk_obs,
                 }
             )
 
     df_agg = pd.DataFrame(agg_rows)
     if not df_agg.empty:
-        df_agg = df_agg.sort_values(
-            by=["rule_rate", "global_slot_macro_acc_mean", "risk_obs_macro_acc_mean"],
-            ascending=False,
-        )
+        df_agg["model"] = df_agg["model"].map(format_model_name)
+    df_agg = sort_model_summary(df_agg)
 
     df_agg.to_csv(df_agg_out, index=False)
+    latex_out = args.out / "model_summary_latex.txt"
+    write_latex_table(df_agg, latex_out)
 
     details_path = args.out / "details.json"
-    if details_path.exists():
-        log(f"Overwriting existing details: {details_path}")
     details_path.write_text(json.dumps(per_video_details, indent=2), encoding="utf-8")
 
     print(f"Wrote: {df_out}")
     print(f"Wrote: {df_agg_out}")
     print(f"Wrote: {details_path}")
+    print(f"Wrote: {latex_out}")
 
 
 def main() -> None:

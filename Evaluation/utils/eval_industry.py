@@ -66,12 +66,16 @@ from utils.eval_common import (
     get_path,
     is_confidence,
     read_json,
-    weighted_mean,
 )
+from utils.latex_table import write_latex_table
+from utils.model_sort import format_model_name, sort_model_summary
+from utils.run_paths import task_eval_dir, task_results_dir
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 TASK_NAME = "industry"
 GT_DIR = f"/opt/dataset/ds_{TASK_NAME}_ripulito/test_dataset_json"
+DEFAULT_RESULTS_DIR = task_results_dir(TASK_NAME)
+DEFAULT_OUT_DIR = task_eval_dir(TASK_NAME)
 
 
 # ----------------------------
@@ -563,8 +567,8 @@ def _consensus_pair_score(a: Dict[str, Any], b: Dict[str, Any]) -> float:
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     ap.add_argument("--results-gold", type=Path, default=GT_DIR)
-    ap.add_argument("--results", type=Path, default=BASE_DIR / "results_industry")
-    ap.add_argument("--out", type=Path, default=BASE_DIR / "eval_out_industry")
+    ap.add_argument("--results", type=Path, default=DEFAULT_RESULTS_DIR)
+    ap.add_argument("--out", type=Path, default=DEFAULT_OUT_DIR)
     ap.add_argument("--limit-videos", type=int, default=None)
     ap.add_argument("--model", action="append", default=None, help="Evaluate only specified model name(s). Can be repeated.")
     ap.add_argument(
@@ -582,6 +586,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run(args: argparse.Namespace) -> None:
+    if args.results == DEFAULT_RESULTS_DIR and not args.results.exists():
+        legacy_results = BASE_DIR / "results_industry"
+        if legacy_results.exists():
+            args.results = legacy_results
     args.out.mkdir(parents=True, exist_ok=True)
     verbose = bool(args.verbose)
     df_agg_out = args.out / "model_summary.csv"
@@ -590,17 +598,8 @@ def run(args: argparse.Namespace) -> None:
         if verbose:
             print(msg)
 
-    existing_summary = None
-    existing_models: Set[str] = set()
     if df_agg_out.exists():
-        try:
-            existing_summary = pd.read_csv(df_agg_out)
-            if "model" in existing_summary.columns:
-                existing_models = {m.replace("-", "_") for m in existing_summary["model"].dropna().astype(str)}
-            else:
-                log(f"Warning: existing summary missing 'model' column: {df_agg_out}")
-        except Exception as exc:
-            log(f"Warning: failed to read existing summary {df_agg_out}: {exc}")
+        log(f"Overwriting existing summary: {df_agg_out}")
 
     teacher_standards = discover_teacher_standards(args.results_gold)
     if args.limit_videos is not None:
@@ -636,16 +635,18 @@ def run(args: argparse.Namespace) -> None:
             allowed = {m.replace("-", "_") for m in args.model}
             if "all" not in allowed:
                 student_files = [(m, p) for (m, p) in student_files if m.replace("-", "_") in allowed]
-        if existing_models:
-            student_files = [(m, p) for (m, p) in student_files if m.replace("-", "_") not in existing_models]
-
         if args.skip_missing_students and not student_files:
             continue
-
         log(f"Video={video_id}: found {len(student_files)} student outputs (consensus_weight={consensus_weight:.3f})")
 
         for model_name, student_path in student_files:
             student = read_json(student_path)
+            if student is None or not isinstance(student, dict):
+                log(f"Skipping student (parse failed or not object): {student_path}")
+                continue
+            if "error" in student:
+                log(f"Skipping student (error present): {student_path}")
+                continue
             vrep = validate_struct(student)
 
             global_slot = None
@@ -658,7 +659,7 @@ def run(args: argparse.Namespace) -> None:
             risk_rating_acc = None
             primary_risk_factors_f1 = None
 
-            if vrep.parse_ok and isinstance(student, dict) and "error" not in student:
+            if vrep.parse_ok:
                 sec, _hits = score_global_and_sections(student, teacher)
                 global_slot = sec.global_macro_acc
                 site_characterization_slot = sec.site_characterization_macro_acc
@@ -676,7 +677,7 @@ def run(args: argparse.Namespace) -> None:
                     "video": video_id,
                     "model": model_name,
                     "parse_ok": vrep.parse_ok,
-                    "has_error": ("error" in student) if isinstance(student, dict) else False,
+                    "has_error": False,
                     "schema_ok": vrep.schema_ok,
                     "rule_ok": vrep.rule_ok,
                     "global_slot_macro_acc": global_slot,
@@ -707,16 +708,6 @@ def run(args: argparse.Namespace) -> None:
 
     df = pd.DataFrame(rows)
     df_out = args.out / "per_video_scores.csv"
-    if df_out.exists():
-        try:
-            df_existing = pd.read_csv(df_out)
-            if not df_existing.empty:
-                if df.empty:
-                    df = df_existing
-                else:
-                    df = pd.concat([df_existing, df], ignore_index=True)
-        except Exception as exc:
-            log(f"Warning: failed to read existing per-video scores {df_out}: {exc}")
     df.to_csv(df_out, index=False)
 
     # Aggregate per model
@@ -737,16 +728,9 @@ def run(args: argparse.Namespace) -> None:
             osr_mean = mean_or_nan("overall_site_risk_macro_acc")
             effective_global = float(global_mean * schema_rate) if not np.isnan(global_mean) else float("nan")
 
-            weighted_global = float("nan")
-            weighted_osr = float("nan")
-            if args.include_teacher_runs:
-                weighted_global = weighted_mean(g2["global_slot_macro_acc"], g2["teacher_consensus_weight"])
-                weighted_osr = weighted_mean(g2["overall_site_risk_macro_acc"], g2["teacher_consensus_weight"])
-
             agg_rows.append(
                 {
                     "model": model_name,
-                    "n_videos": int(len(g2)),
                     "parse_rate": parse_rate,
                     "schema_rate": schema_rate,
                     "rule_rate": rule_rate,
@@ -759,38 +743,25 @@ def run(args: argparse.Namespace) -> None:
                     "overall_site_risk_macro_acc_mean": osr_mean,
                     "risk_rating_acc_mean": mean_or_nan("risk_rating_acc"),
                     "primary_risk_factors_f1_mean": mean_or_nan("primary_risk_factors_f1"),
-                    "weight_global_slot_macro_acc_mean": weighted_global,
-                    "weight_overall_site_risk_macro_acc_mean": weighted_osr,
                 }
             )
 
     df_agg = pd.DataFrame(agg_rows)
     if not df_agg.empty:
-        df_agg = df_agg.sort_values(
-            by=["rule_rate", "global_slot_macro_acc_mean", "overall_site_risk_macro_acc_mean"],
-            ascending=False,
-        )
+        df_agg["model"] = df_agg["model"].map(format_model_name)
 
-    if existing_summary is not None and not existing_summary.empty:
-        if df_agg.empty:
-            df_agg = existing_summary
-        else:
-            df_agg = pd.concat([existing_summary, df_agg], ignore_index=True)
+    df_agg = sort_model_summary(df_agg)
     df_agg.to_csv(df_agg_out, index=False)
+    latex_out = args.out / "model_summary_latex.txt"
+    write_latex_table(df_agg, latex_out)
 
     details_path = args.out / "details.json"
-    if details_path.exists():
-        try:
-            existing_details = json.loads(details_path.read_text(encoding="utf-8"))
-            if isinstance(existing_details, list) and existing_details:
-                per_video_details = existing_details + per_video_details
-        except Exception as exc:
-            log(f"Warning: failed to read existing details {details_path}: {exc}")
     details_path.write_text(json.dumps(per_video_details, indent=2), encoding="utf-8")
 
     print(f"Wrote: {df_out}")
     print(f"Wrote: {df_agg_out}")
     print(f"Wrote: {details_path}")
+    print(f"Wrote: {latex_out}")
 
 
 def main() -> None:

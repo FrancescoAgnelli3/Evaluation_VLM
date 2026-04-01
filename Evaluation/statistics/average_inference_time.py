@@ -36,8 +36,9 @@ MODEL_CHOICES = ("qwen-2B", "qwen-8B", "qwen-32B", "cosmos1", "cosmos2-2B", "cos
 login(token=os.environ["HF_TOKEN"])
 
 BASE_DIR = Path(__file__).resolve().parent
+ARTIFACTS_DIR = BASE_DIR.parent / "artifacts"
 DEFAULT_MEDIA_DIR = BASE_DIR / "input_videos"
-DEFAULT_OUTPUT_PATH = BASE_DIR / "eval_out" / "average_inference_times.txt"
+DEFAULT_OUTPUT_PATH = ARTIFACTS_DIR / "timing" / "eval" / "average_inference_times.txt"
 PROMPT_PERCEPTION_JSON = (BASE_DIR / "prompts" / "perception_prompt.txt").read_text(encoding="utf-8").strip()
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}

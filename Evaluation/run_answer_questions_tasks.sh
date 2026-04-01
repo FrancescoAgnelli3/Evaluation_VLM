@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT="${ROOT_DIR}/answer_questions.py"
-IDLE_SECONDS_REQUIRED=0
+IDLE_SECONDS_REQUIRED=400
 POLL_INTERVAL=1
 
 is_all_gpus_free() {
@@ -39,9 +39,9 @@ echo "GPUs free for ${IDLE_SECONDS_REQUIRED}s. Launching..."
 BASE_MODELS=(
   "cosmos2-2B"
   "cosmos2-8B"
-  # "qwen-8B"
-  # "qwen-2B"
-  # "qwen-32B"
+  "qwen-8B"
+  "qwen-2B"
+  "qwen-32B"
 )
 
 TASKS=(
@@ -58,9 +58,9 @@ for task in "${TASKS[@]}"; do
     (*) echo "Unknown task: ${task}" >&2; exit 1 ;;
   esac
 
-  # python3 "$SCRIPT" --task "$task" --model "cosmos2-reason-LoRAFT-${lora_suffix}-2B"
-  # python3 "$SCRIPT" --task "$task" --model "cosmos2-reason-LoRAFT-${lora_suffix}-8B"
-  python3 "$SCRIPT" --task "$task" --model "qwen3.5-LoRAFT-${lora_suffix}-9B"
+  python3 "$SCRIPT" --task "$task" --model "cosmos2-reason-LoRAFT-${lora_suffix}-2B"
+  python3 "$SCRIPT" --task "$task" --model "cosmos2-reason-LoRAFT-${lora_suffix}-8B"
+  # python3 "$SCRIPT" --task "$task" --model "qwen3.5-LoRAFT-${lora_suffix}-9B"
   
   # for model in "${BASE_MODELS[@]}"; do
   #   python3 "$SCRIPT" --task "$task" --model "$model"

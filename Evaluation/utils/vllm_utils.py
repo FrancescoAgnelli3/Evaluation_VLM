@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from urllib.parse import urlparse
 from collections import OrderedDict
 from pathlib import Path
 from typing import Dict, List, NamedTuple, Optional, Union
@@ -31,10 +32,12 @@ DEFAULT_VLLM_BASE_URL = f"http://{VLLM_HOST}:{VLLM_PORT}/v1"
 
 VLLM_STARTUP_TIMEOUT = int(os.environ.get("VLLM_STARTUP_TIMEOUT", "900"))
 VLLM_EXTRA_ARGS = shlex.split(os.environ.get("VLLM_EXTRA_ARGS", ""))
+VLLM_TENSOR_PARALLEL_SIZE = int(os.environ.get("VLLM_TENSOR_PARALLEL_SIZE", "0"))
+VLLM_PIPELINE_PARALLEL_SIZE = int(os.environ.get("VLLM_PIPELINE_PARALLEL_SIZE", "0"))
 
 # KV cache + memory safety defaults (kept for compatibility; vLLM args may use env elsewhere)
-VLLM_MAX_MODEL_LEN = int(os.environ.get("VLLM_MAX_MODEL_LEN", "70000"))
-VLLM_GPU_MEMORY_UTILIZATION = float(os.environ.get("VLLM_GPU_MEMORY_UTILIZATION", "0.90"))
+VLLM_MAX_MODEL_LEN = int(os.environ.get("VLLM_MAX_MODEL_LEN", "16000"))
+VLLM_GPU_MEMORY_UTILIZATION = float(os.environ.get("VLLM_GPU_MEMORY_UTILIZATION", "0.97"))
 
 DEFAULT_TIMEOUT = float(os.environ.get("VLLM_TIMEOUT", "3600"))
 DEFAULT_MAX_NEW_TOKENS = int(os.environ.get("MAX_NEW_TOKENS", "4096"))
@@ -81,6 +84,26 @@ def _choose_vllm_port(host: str) -> int:
         return int(sock.getsockname()[1])
 
 
+def _normalize_vllm_base_url(url: str) -> str:
+    normalized = url.rstrip("/")
+    if normalized.endswith("/v1"):
+        return normalized
+    return f"{normalized}/v1"
+
+
+def _parse_host_port(url: str) -> tuple[str, int]:
+    parsed = urlparse(url)
+    if not parsed.hostname:
+        raise ValueError(f"Invalid vLLM base URL: {url}")
+    port = parsed.port
+    if port is None:
+        if parsed.scheme == "https":
+            port = 443
+        else:
+            port = 80
+    return parsed.hostname, port
+
+
 def wait_ready(url: str, timeout_s: int = 120) -> None:
     t0 = time.time()
     while time.time() - t0 < timeout_s:
@@ -105,6 +128,7 @@ class VLLMServerManager:
         timeout_s: int,
         env: Dict[str, str],
         extra_args: List[str],
+        base_url: Optional[str] = None,
     ) -> None:
         self.model_key = model_key
         self.host = host
@@ -114,16 +138,30 @@ class VLLMServerManager:
         self.timeout_s = timeout_s
         self.env = env
         self.extra_args = extra_args
-        self.health_url = f"http://{host}:{port}/v1/models"
+        self.base_url = base_url.rstrip("/") if base_url else None
+        resolved_base = self.base_url or f"http://{host}:{port}/v1"
+        self.health_url = f"{resolved_base}/models"
         self._proc: Optional[subprocess.Popen] = None
 
     def start(self) -> None:
+        if self.base_url:
+            wait_ready(self.health_url, timeout_s=self.timeout_s)
+            return
         if self._proc and self._proc.poll() is None:
             return
 
         num_gpus = _count_available_gpus(self.env)
         if num_gpus < 1:
             raise RuntimeError("No GPUs available for vLLM (CUDA_VISIBLE_DEVICES may be empty or invalid).")
+
+        tensor_parallel_size = VLLM_TENSOR_PARALLEL_SIZE if VLLM_TENSOR_PARALLEL_SIZE > 0 else num_gpus
+        if tensor_parallel_size < 1:
+            raise RuntimeError("VLLM_TENSOR_PARALLEL_SIZE must be >= 1 when set.")
+        if tensor_parallel_size > num_gpus:
+            raise RuntimeError(
+                f"Requested tensor-parallel size {tensor_parallel_size} exceeds visible GPUs {num_gpus}. "
+                "Expose more GPUs via CUDA_VISIBLE_DEVICES or lower VLLM_TENSOR_PARALLEL_SIZE."
+            )
 
         cmd = [
             "vllm",
@@ -140,18 +178,22 @@ class VLLMServerManager:
             "--gpu-memory-utilization", 
             str(VLLM_GPU_MEMORY_UTILIZATION),
             "--tensor-parallel-size",
-            str(num_gpus),
+            str(tensor_parallel_size),
         ]
-        # if self.extra_args:
-        #     cmd.extend(self.extra_args)
+        if VLLM_PIPELINE_PARALLEL_SIZE > 0:
+            cmd.extend(["--pipeline-parallel-size", str(VLLM_PIPELINE_PARALLEL_SIZE)])
+        if self.extra_args:
+            cmd.extend(self.extra_args)
 
         logging.info(
-            "[vLLM] Starting server for %s as '%s' using repo '%s' on %s:%s",
+            "[vLLM] Starting server for %s as '%s' using repo '%s' on %s:%s (visible_gpus=%d, tensor_parallel=%d)",
             self.model_key,
             self.served_model_name,
             self.model_repo,
             self.host,
             self.port,
+            num_gpus,
+            tensor_parallel_size,
         )
 
         # Start in a new session (new process group) so we can signal the whole tree.
@@ -255,6 +297,23 @@ def ensure_vllm_server(model_key: str, cuda_visible_devices: Optional[str] = Non
         port = _choose_vllm_port(VLLM_HOST)
         model_repo = resolve_model_repo(model_key)
         served_model_name = served_name_for(model_key)
+        if model_repo.startswith(("http://", "https://")):
+            base_url = _normalize_vllm_base_url(model_repo)
+            host, port = _parse_host_port(base_url)
+            manager = VLLMServerManager(
+                model_key=model_key,
+                host=host,
+                port=port,
+                model_repo=model_repo,
+                served_model_name=served_model_name,
+                timeout_s=VLLM_STARTUP_TIMEOUT,
+                env=env,
+                extra_args=VLLM_EXTRA_ARGS,
+                base_url=base_url,
+            )
+            manager.start()
+            _VLLM_SERVER_MANAGER = manager
+            return _VLLM_SERVER_MANAGER
         manager = VLLMServerManager(
             model_key=model_key,
             host=VLLM_HOST,
@@ -571,7 +630,11 @@ class VLLMClientFactory:
         timeout: float = DEFAULT_TIMEOUT,
         api_key: Optional[str] = None,
     ) -> "VLLMClientFactory":
-        resolved_base_url = base_url.rstrip("/") if base_url else f"http://{manager.host}:{manager.port}/v1"
+        resolved_base_url = (
+            base_url.rstrip("/")
+            if base_url
+            else (manager.base_url or f"http://{manager.host}:{manager.port}/v1")
+        )
         return cls(
             model_key=model_key,
             model_name=manager.served_model_name,
@@ -621,7 +684,7 @@ def ensure_clients(
             continue
         try:
             manager = ensure_vllm_server(model_key, cuda_visible_devices=cuda_visible_devices)
-            base_url = f"http://{manager.host}:{manager.port}/v1"
+            base_url = manager.base_url or f"http://{manager.host}:{manager.port}/v1"
             clients[model_key] = VLLMClient(
                 model_key=model_key,
                 model_name=manager.served_model_name,

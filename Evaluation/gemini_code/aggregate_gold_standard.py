@@ -35,7 +35,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple, Union
 
 BASE_DIR = Path(__file__).resolve().parent
-DEFAULT_INPUT_DIR = BASE_DIR / "results_gold"
+ARTIFACTS_DIR = BASE_DIR.parent / "artifacts"
+DEFAULT_INPUT_DIR = ARTIFACTS_DIR / "gold" / "results_gold"
 RAW_RE = re.compile(r"^(?P<stem>.+)\.teacher\.perception_raw\.run_(?P<run>\d+)\.json$")
 
 

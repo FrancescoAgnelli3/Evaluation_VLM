@@ -33,6 +33,7 @@ from typing import Dict, List, Optional, Tuple
 
 from huggingface_hub import login  # noqa: E402
 
+from utils.run_paths import task_results_dir  # noqa: E402
 from utils.vllm_utils import (  # noqa: E402
     DEFAULT_MODEL_SELECTION,
     MODEL_CHOICES,
@@ -48,9 +49,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_MEDIA_DIR = "/opt/dataset/test_dataset"
 TASK_MEDIA_DIRS = {
     "road": "/opt/dataset/test_dataset",
-    "people": "/opt/dataset/ds_people/test_dataset",
+    "people": "/opt/dataset/ds_people_ripulito/test_dataset",
     "environment": "/opt/dataset/ds_environment/test_dataset",
-    "industry": "/opt/dataset/ds_industry/test_dataset",
+    "industry": "/opt/dataset/ds_industry_ripulito/test_dataset",
 }
 DEFAULT_TASK = "road"
 TASK_PROMPTS = {
@@ -106,7 +107,7 @@ def parse_args() -> argparse.Namespace:
     )
     args = parser.parse_args()
     if args.output_dir is None:
-        args.output_dir = BASE_DIR / f"results_{args.task}"
+        args.output_dir = task_results_dir(args.task)
     if args.media_dir == Path(DEFAULT_MEDIA_DIR):
         task_media = TASK_MEDIA_DIRS.get(args.task)
         if task_media:

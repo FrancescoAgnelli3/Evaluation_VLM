@@ -35,8 +35,9 @@ from google.genai import types
 
 
 BASE_DIR = Path(__file__).resolve().parent
+ARTIFACTS_DIR = BASE_DIR.parent / "artifacts"
 DEFAULT_MEDIA_DIR = BASE_DIR / "demos"
-DEFAULT_OUTPUT_DIR = BASE_DIR / "results_gold"
+DEFAULT_OUTPUT_DIR = ARTIFACTS_DIR / "gold" / "results_gold"
 
 
 # ----------------------------
