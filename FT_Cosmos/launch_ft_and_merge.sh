@@ -73,23 +73,6 @@ run_case() {
   echo
 }
 
-# # Cases
-# run_case \
-#   "1) environment | 2B" \
-#   "nvidia/Cosmos-Reason2-2B" \
-#   "/opt/dataset/ds_environment/train_dataset" \
-#   "/opt/dataset/ds_environment/train_dataset_json" \
-#   "environment" \
-#   "/opt/models/Cosmos-Reason2-FT/2B/LoRA/ds_environment"
-
-# run_case \
-#   "2) environment | 8B" \
-#   "nvidia/Cosmos-Reason2-8B" \
-#   "/opt/dataset/ds_environment/train_dataset" \
-#   "/opt/dataset/ds_environment/train_dataset_json" \
-#   "environment" \
-#   "/opt/models/Cosmos-Reason2-FT/8B/LoRA/ds_environment"
-
 run_case \
   "3) industry | 2B" \
   "nvidia/Cosmos-Reason2-2B" \

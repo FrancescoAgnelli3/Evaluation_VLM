@@ -1,0 +1,88 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: OpenMDW-1.1
+
+# local_reasoner_sft — local manifest-based VLM dialog SFT via DataPackerDataLoader.
+# Base config = cosmos_framework/configs/base/vlm/config.py (selected by [job].task="vlm").
+#
+# Required env at launch: DATASET_PATH, pointing to a directory with:
+#   meta.json
+#   media/<id>.mp4
+#   text/<id>.json
+#
+# Example launch:
+#   DATASET_PATH=/opt/dataset/ds_pulito/train_dataset_manifest \
+#   bash examples/launch_sft_local_reasoner.sh
+
+[job]
+task         = "vlm"
+experiment   = "local_reasoner_sft"
+project      = "cosmos3"
+group        = "vlm_local_reasoner_sft"
+name         = "local_reasoner_sft"
+wandb_mode   = "disabled"
+
+[model]
+attn_implementation = "cosmos"
+precision           = "bfloat16"
+
+[model.backbone]
+model_name = "Qwen/Qwen3-VL-8B-Instruct"
+safetensors_path = "/opt/models/dataset_clean/Cosmos3-FT/nano/local_reasoner_sft/hf_exports/iter_000000500/"
+
+[model.ema]
+enabled         = false
+rate            = 0.1
+iteration_shift = 0
+
+[model.parallelism]
+data_parallel_shard_degree      = 8
+data_parallel_replicate_degree  = -1
+context_parallel_shard_degree   = 1
+cfg_parallel_shard_degree       = 1
+
+[model.compile]
+enabled         = false
+compile_dynamic = true
+
+[model.activation_checkpointing]
+mode               = "full"
+save_ops_regex     = ["fmha"]
+preserve_rng_state = true
+determinism_check  = "default"
+
+[optimizer]
+betas         = [0.9, 0.95]
+eps           = 1.0e-8
+fused         = true
+lr            = 1.0e-5
+weight_decay  = 0.1
+
+[scheduler]
+cycle_lengths      = [500]
+f_max              = [1.0]
+f_min              = [0.5]
+f_start            = [0.05]
+verbosity_interval = 0
+warm_up_steps      = [100]
+
+[trainer]
+distributed_parallelism = "fsdp"
+grad_accum_iter         = 1
+logging_iter            = 1
+max_iter                = 500
+
+[trainer.callbacks.compile_tokenizer]
+compile_after_iterations = 3
+enabled                  = false
+
+[trainer.callbacks.grad_clip]
+clip_norm    = 1.0
+force_finite = false
+
+[checkpoint]
+keys_to_skip_loading = []
+load_path            = "???"
+save_iter            = 100
+
+[dataloader_train]
+max_samples_per_batch = 1

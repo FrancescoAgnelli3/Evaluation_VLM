@@ -10,11 +10,11 @@ from typing import Tuple
 
 QWEN_32B_REPO = os.environ.get("QWEN_32B_REPO", "Qwen/Qwen3-VL-32B-Thinking")
 QWEN_122B_REPO = os.environ.get("QWEN_122B_REPO", "Qwen/Qwen3.5-122B-A10B")
-QWEN3_5_397B_REPO = os.environ.get("QWEN3_5_397B_REPO", "http://localhost:14000/v1/models")
+QWEN3_5_397B_REPO = os.environ.get("QWEN3_5_397B_REPO", "http://localhost:14000")
 QWEN3_5_27B_REPO = os.environ.get("QWEN3_5_27B_REPO", "Qwen/Qwen3.5-27B")
 QWEN3_5_FT_27B_100K_REPO = os.environ.get(
     "QWEN3_5_FT_27B_100K_REPO",
-    "/opt/models/Qwen3.5_FT/Qwen3.5-27B_100k/v4-20260320-020441/checkpoint-1531",
+    "/opt/models/dataset_clean/Qwen3.5-27B/checkpoint-1430",
 )
 QWEN3_5_FT_27B_40K_REPO = os.environ.get(
     "QWEN3_5_FT_27B_40K_REPO",
@@ -65,8 +65,18 @@ QWEN3_5_LORAFT_9B_ENVIRONMENT_REPO = os.environ.get(
 )
 
 COSMOS_REASON1_REPO = os.environ.get("COSMOS_REASON1_REPO", "nvidia/Cosmos-Reason1-7B")
+COSMOS3_REPO = os.environ.get("COSMOS3_REPO", "/home/fa/projects/cosmos-framework/examples/checkpoints/Cosmos3-Nano-VLM").strip()
+COSMOS3_NANO_FULLFT_REPO = os.environ.get(
+    "COSMOS3_NANO_FULLFT_REPO",
+    "/opt/models/dataset_clean/Cosmos3-FT/nano/local_reasoner_sft/hf_exports/iter_000000500/",
+)
 COSMOS_REASON2_2B_REPO = os.environ.get("COSMOS_REASON2_2B_REPO", "nvidia/Cosmos-Reason2-2B")
 COSMOS_REASON2_8B_REPO = os.environ.get("COSMOS_REASON2_8B_REPO", "nvidia/Cosmos-Reason2-8B")
+COSMOS_REASON2_32B_REPO = os.environ.get("COSMOS_REASON2_32B_REPO", "nvidia/Cosmos-Reason2-32B")
+COSMOS_REASON2_LORAFT_32B_17K_REPO = os.environ.get(
+    "COSMOS_REASON2_LORAFT_32B_17K_REPO",
+    "/opt/models/Cosmos-Reason2-FT/32B/LoRA/ds_road/merged",
+)
 COSMOS_REASON2_LORAFT_2B_13K_REPO = os.environ.get(
     "COSMOS_REASON2_LORAFT_2B_13K_REPO",
     "/storage/models/Cosmos-Reason2-FT/2B/dataset_13k/LoRA/merged",
@@ -82,6 +92,10 @@ COSMOS_REASON2_FULLFT_2B_13K_REPO = os.environ.get(
 COSMOS_REASON2_FULLFT_8B_13K_REPO = os.environ.get(
     "COSMOS_REASON2_FULLFT_8B_13K_REPO",
     "/storage/models/Cosmos-Reason2-FT/8B/full_FT/dataset_13k/safetensors/step_780/",
+)
+COSMOS_REASON2_FULLFT_8B_REPO = os.environ.get(
+    "COSMOS_REASON2_FULLFT_8B_REPO",
+    "/opt/models/dataset_clean/Cosmos-Reason2-FT/8B/full_FT/20260528123115/safetensors/step_4464",
 )
 COSMOS_REASON2_FULLFT_2B_10K_REPO = os.environ.get(
     "COSMOS_REASON2_FULLFT_2B_10K_REPO",
@@ -178,9 +192,13 @@ MODEL_CHOICES: Tuple[str, ...] = (
     # "qwen-8B-FT-both-1k",
     "cosmos2-2B",
     "cosmos2-8B",
+    "cosmos-reason2-32B",
+    "cosmos2-reason-LoRAFT_17k-32B",
+    "cosmos3-nano-fullFT",
     # "cosmos2-reason-LoRAFT_13k-2B",
     # "cosmos2-reason-LoRAFT_13k-8B",
     "cosmos2-reason-fullFT_13k-2B",
+    "cosmos2-reason-fullFT-8B",
     # "cosmos2-reason-fullFT_13k-8B",
     # "cosmos2-reason-fullFT_10k-2B",
     # "cosmos2-reason-fullFT_5k-2B",
@@ -200,10 +218,27 @@ MODEL_CHOICES: Tuple[str, ...] = (
     "cosmos2-reason-LoRAFT-industry-2B",
     "cosmos2-reason-LoRAFT-industry-8B",
     # "cosmos1",
+    "cosmos3",
+    "cosmos3-reason",
     "qwen-2B",
     "all",
 )
 DEFAULT_MODEL_SELECTION = os.environ.get("DEFAULT_MODEL", "cosmos2-2B")
+
+
+REASONING_USER_PROMPT_SUFFIX = (
+    "Answer the question using the following format:\n\n"
+    "<think>\n"
+    "Your reasoning\n"
+    "</think>\n\n"
+    "Write your final answer immediately after the </think> tag."
+)
+
+
+def prompt_text_for_model(model_key: str, base_prompt: str) -> str:
+    if model_key == "cosmos3-reason" and REASONING_USER_PROMPT_SUFFIX not in base_prompt:
+        return f"{base_prompt.rstrip()}\n\n{REASONING_USER_PROMPT_SUFFIX}"
+    return base_prompt
 
 
 def served_name_for(model_key: str) -> str:
@@ -212,7 +247,7 @@ def served_name_for(model_key: str) -> str:
     if model_key == "qwen3.5-122B":
         return os.environ.get("QWEN_VLLM_MODEL_NAME_122B", "Qwen3.5-122B-A10B")
     if model_key == "qwen3.5-397B":
-        return os.environ.get("QWEN3_5_397B_NAME", "Qwen3.5-397B-A17B-FP8")
+        return os.environ.get("QWEN3_5_397B_NAME", "qwen")
     if model_key == "qwen3.5-27B":
         return os.environ.get("QWEN3_5_27B_NAME", "Qwen3.5-27B")
     if model_key == "qwen3.5-FT_100k-27B":
@@ -259,16 +294,28 @@ def served_name_for(model_key: str) -> str:
         return os.environ.get("QWEN_VLLM_MODEL_NAME_32B_FT_BOTH_1K", "Qwen3-32B-FT-Both-1k")
     if model_key == "cosmos1":
         return "Cosmos-Reason1"
+    if model_key == "cosmos3":
+        return "Cosmos3"
+    if model_key == "cosmos3-nano-fullFT":
+        return os.environ.get("COSMOS3_NANO_FULLFT_NAME", "Cosmos3-Nano-FullFT")
+    if model_key == "cosmos3-reason":
+        return "Cosmos3-reason"
     if model_key == "cosmos2-2B":
         return "Cosmos-Reason2-2B"
     if model_key == "cosmos2-8B":
         return "Cosmos-Reason2-8B"
+    if model_key == "cosmos-reason2-32B":
+        return "Cosmos-Reason2-32B"
+    if model_key == "cosmos2-reason-LoRAFT_17k-32B":
+        return os.environ.get("COSMOS_REASON2_LORAFT_32B_17K_NAME", "Cosmos-Reason2-LoRAFT-17k_32B")
     if model_key == "cosmos2-reason-LoRAFT_13k-2B":
         return os.environ.get("COSMOS_REASON2_LORAFT_2B_13k_NAME", "Cosmos-Reason2-LoRAFT-13k_2B")
     if model_key == "cosmos2-reason-LoRAFT_13k-8B":
         return os.environ.get("COSMOS_REASON2_LORAFT_13k_NAME", "Cosmos-Reason2-LoRAFT-13k_8B")
     if model_key == "cosmos2-reason-fullFT_13k-2B":
         return os.environ.get("COSMOS_REASON2_FULLFT_13k_NAME", "Cosmos-Reason2-FullFT-13k_2B")
+    if model_key == "cosmos2-reason-fullFT-8B":
+        return os.environ.get("COSMOS_REASON2_FULLFT_8B_NAME", "Cosmos-Reason2-FullFT-8B")
     if model_key == "cosmos2-reason-fullFT_13k-8B":
         return os.environ.get("COSMOS_REASON2_FULLFT_8B_13k_NAME", "Cosmos-Reason2-FullFT-13k_8B")
     if model_key == "cosmos2-reason-fullFT_10k-2B":
@@ -361,16 +408,28 @@ def resolve_model_repo(model_key: str) -> str:
         return QWEN_32B_FT_BOTH_1K_REPO
     if model_key == "cosmos1":
         return COSMOS_REASON1_REPO
+    if model_key == "cosmos3":
+        return COSMOS3_REPO.strip()
+    if model_key == "cosmos3-nano-fullFT":
+        return COSMOS3_NANO_FULLFT_REPO
+    if model_key == "cosmos3-reason":
+        return COSMOS3_REPO.strip()
     if model_key == "cosmos2-2B":
         return COSMOS_REASON2_2B_REPO
     if model_key == "cosmos2-8B":
         return COSMOS_REASON2_8B_REPO
+    if model_key == "cosmos-reason2-32B":
+        return COSMOS_REASON2_32B_REPO
+    if model_key == "cosmos2-reason-LoRAFT_17k-32B":
+        return COSMOS_REASON2_LORAFT_32B_17K_REPO
     if model_key == "cosmos2-reason-LoRAFT_13k-2B":
         return COSMOS_REASON2_LORAFT_2B_13K_REPO
     if model_key == "cosmos2-reason-LoRAFT_13k-8B":
         return COSMOS_REASON2_LORAFT_8B_13K_REPO
     if model_key == "cosmos2-reason-fullFT_13k-2B":
         return COSMOS_REASON2_FULLFT_2B_13K_REPO
+    if model_key == "cosmos2-reason-fullFT-8B":
+        return COSMOS_REASON2_FULLFT_8B_REPO
     if model_key == "cosmos2-reason-fullFT_13k-8B":
         return COSMOS_REASON2_FULLFT_8B_13K_REPO
     if model_key == "cosmos2-reason-fullFT_10k-2B":

@@ -44,7 +44,7 @@ from utils.run_paths import task_eval_dir, task_results_dir
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 TASK_NAME = "environment"
-GT_DIR = f"/opt/dataset/ds_{TASK_NAME}/test_dataset_json"
+GT_DIR = "/opt/dataset/ds_environment/test_dataset_json"#f"/opt/dataset/ds_{TASK_NAME}/test_dataset_json"
 DEFAULT_RESULTS_DIR = task_results_dir(TASK_NAME)
 DEFAULT_OUT_DIR = task_eval_dir(TASK_NAME)
 

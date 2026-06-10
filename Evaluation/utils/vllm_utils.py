@@ -36,8 +36,8 @@ VLLM_TENSOR_PARALLEL_SIZE = int(os.environ.get("VLLM_TENSOR_PARALLEL_SIZE", "0")
 VLLM_PIPELINE_PARALLEL_SIZE = int(os.environ.get("VLLM_PIPELINE_PARALLEL_SIZE", "0"))
 
 # KV cache + memory safety defaults (kept for compatibility; vLLM args may use env elsewhere)
-VLLM_MAX_MODEL_LEN = int(os.environ.get("VLLM_MAX_MODEL_LEN", "16000"))
-VLLM_GPU_MEMORY_UTILIZATION = float(os.environ.get("VLLM_GPU_MEMORY_UTILIZATION", "0.97"))
+VLLM_MAX_MODEL_LEN = int(os.environ.get("VLLM_MAX_MODEL_LEN", "70000"))
+VLLM_GPU_MEMORY_UTILIZATION = float(os.environ.get("VLLM_GPU_MEMORY_UTILIZATION", "0.90"))
 
 DEFAULT_TIMEOUT = float(os.environ.get("VLLM_TIMEOUT", "3600"))
 DEFAULT_MAX_NEW_TOKENS = int(os.environ.get("MAX_NEW_TOKENS", "4096"))
@@ -437,6 +437,17 @@ def _maybe_reencode_video(video_path: Path) -> Path:
         return video_path
 
 
+def _strip_reasoning_prefix(text: str) -> str:
+    if not text:
+        return text
+    lower = text.lower()
+    end_tag = "</think>"
+    idx = lower.rfind(end_tag)
+    if idx == -1:
+        return text
+    return text[idx + len(end_tag):].lstrip()
+
+
 def _extract_first_json_object(text: str) -> Optional[str]:
     if not text:
         return None
@@ -571,7 +582,7 @@ class VLLMClient:
         if result is None:
             return None
 
-        text = result.response_text
+        text = _strip_reasoning_prefix(result.response_text)
         extracted = _extract_first_json_object(text) or text
         if _is_valid_json_object(extracted):
             if extracted != text:
@@ -587,7 +598,7 @@ class VLLMClient:
         if retry is None:
             return result
 
-        retry_text = retry.response_text
+        retry_text = _strip_reasoning_prefix(retry.response_text)
         retry_extracted = _extract_first_json_object(retry_text) or retry_text
         if _is_valid_json_object(retry_extracted):
             if retry_extracted != retry_text:

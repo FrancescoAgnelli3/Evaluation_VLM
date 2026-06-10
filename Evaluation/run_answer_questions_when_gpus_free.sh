@@ -34,6 +34,10 @@ while true; do
 done
 
 echo "GPUs free for ${IDLE_SECONDS_REQUIRED}s. Launching..."
+MODEL_ARGS=(
+  --model cosmos3
+)
 python "$SCRIPT" \
-  --model qwen3.5-FT_40k-27B \
+  "${MODEL_ARGS[@]}" \
   --task road \
+

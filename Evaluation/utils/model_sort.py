@@ -27,17 +27,33 @@ def format_model_name(model: object) -> str:
     name = str(model or "")
     norm = name.lower()
 
-    # Cosmos-Reason2 normalization
+    # Cosmos-Reason2 / Cosmos3 normalization
+    norm = norm.replace("cosmos_reason2", "cosmos-reason2")
+    norm = norm.replace("cosmos_reason3", "cosmos3")
     norm = norm.replace("cosmos2_reason", "cosmos-reason2")
     norm = norm.replace("cosmos2", "cosmos-reason2")
+    if "cosmos-reason2-32b" in norm:
+        norm = norm.replace("cosmos-reason2-32b", "Cosmos-Reason2-32B")
+    if "cosmos3" in norm:
+        norm = norm.replace("cosmos3", "Cosmos3")
+    if "cosmos2-reason-loraft_17k-32b" in norm:
+        norm = norm.replace("cosmos2-reason-loraft_17k-32b", "Cosmos-Reason2-LoRAFT-17k_32B")
 
     # Qwen normalization
     norm = norm.replace("qwen3.5", "Qwen3.5")
     norm = norm.replace("qwen", "Qwen3")
 
     # Preserve original casing for any remaining parts by applying replacements on the original
+    name = name.replace("cosmos_reason2_32b", "Cosmos-Reason2-32B")
+    name = name.replace("cosmos_reason3", "Cosmos3")
+    name = name.replace("cosmos2_reason_32b", "Cosmos-Reason2-32B")
+    name = name.replace("cosmos_reason2", "Cosmos-Reason2")
+    name = name.replace("cosmos-reason2", "Cosmos-Reason2")
     name = name.replace("cosmos2_reason", "Cosmos-Reason2")
     name = name.replace("cosmos2", "Cosmos-Reason2")
+    name = name.replace("cosmos-reason2-32B", "Cosmos-Reason2-32B")
+    name = name.replace("cosmos3", "Cosmos3")
+    name = name.replace("cosmos2-reason-LoRAFT_17k-32B", "Cosmos-Reason2-LoRAFT-17k_32B")
     name = name.replace("qwen3.5", "Qwen3.5")
     name = name.replace("qwen", "Qwen3")
 

@@ -22,7 +22,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 # # Ensure HF/torch caches are redirected before anything that may touch HF.
 # os.environ.setdefault("HF_HOME", "/mnt/Repo/hf")
@@ -33,6 +33,7 @@ from typing import Dict, List, Optional, Tuple
 
 from huggingface_hub import login  # noqa: E402
 
+from utils.models_utils import prompt_text_for_model  # noqa: E402
 from utils.run_paths import task_results_dir  # noqa: E402
 from utils.vllm_utils import (  # noqa: E402
     DEFAULT_MODEL_SELECTION,
@@ -48,10 +49,10 @@ login(token=os.environ["HF_TOKEN"])
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_MEDIA_DIR = "/opt/dataset/test_dataset"
 TASK_MEDIA_DIRS = {
-    "road": "/opt/dataset/test_dataset",
-    "people": "/opt/dataset/ds_people_ripulito/test_dataset",
+    "road": "/opt/dataset/ds_pulito/test_dataset",
+    "people": "/opt/dataset/ds_people/test_dataset",
     "environment": "/opt/dataset/ds_environment/test_dataset",
-    "industry": "/opt/dataset/ds_industry_ripulito/test_dataset",
+    "industry": "/opt/dataset/ds_industry/test_dataset",
 }
 DEFAULT_TASK = "road"
 TASK_PROMPTS = {
@@ -102,7 +103,7 @@ def parse_args() -> argparse.Namespace:
         action="append",
         choices=MODEL_CHOICES,
         help=(
-            "Vision-language model(s) to run. Provide multiple times; default is cosmos2-2B. "
+            f"Vision-language model(s) to run. Provide multiple times; default is {DEFAULT_MODEL_SELECTION}. "
         ),
     )
     args = parser.parse_args()
@@ -215,6 +216,7 @@ def process_questions(args: argparse.Namespace) -> None:
         for model_key in selected_models:
             manager = ensure_vllm_server(model_key)
             client_factory = VLLMClientFactory.from_server(manager, model_key)
+            prompt_text = prompt_text_for_model(model_key, args.prompt_text)
 
             # Select the subset for this run.
             if max_samples is None:
@@ -244,7 +246,7 @@ def process_questions(args: argparse.Namespace) -> None:
                         media_dir,
                         output_dir,
                         model_key,
-                        args.prompt_text,
+                        prompt_text,
                     )
                     if not ok:
                         logging.info("Failed write for media=%s with model=%s: %s", photo_id, model_key, err)
@@ -280,7 +282,7 @@ def process_questions(args: argparse.Namespace) -> None:
                             media_dir,
                             output_dir,
                             model_key,
-                            args.prompt_text,
+                            prompt_text,
                         )
                         future_to_media[fut] = media_path
 

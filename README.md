@@ -1,7 +1,7 @@
 # Evaluation_VLM
 
 Video VLM evaluation harness for road-safety perception. It can:
-- Fine-tune Qwen3-VL and Cosmos-Reason2 on video+JSON labels.
+- Fine-tune Qwen3-VL, Cosmos-Reason2, and Cosmos3 on video+JSON labels.
 - Run video-only inference via vLLM/OpenAI-compatible APIs.
 - Score model outputs against Gemini-generated gold standards.
 
@@ -117,12 +117,165 @@ NUM_GPUS=4 bash FT_Qwen3/run.sh \
   --use_qlora
 ```
 
-## Fine-tuning Cosmos-Reason2
+## Fine-tuning Cosmos3
 
-Scripts live in `FT_Cosmos/`. This training script uses TRL SFTTrainer and has
-an internal multi-process launcher when multiple GPUs are available.
-It supports either matching `*.mp4` + `*.json` pairs or a `metadata.jsonl` file
-inside `--json_dir`.
+Cosmos3 full FT uses the upstream `cosmos-framework` repo rather than the
+`FT_Cosmos/` scripts in this repository.
+
+### Download / prepare Cosmos3 weights for FT
+
+1) Clone the upstream repo
+
+```bash
+git clone https://github.com/NVIDIA/Cosmos-Framework.git cosmos-framework
+cd cosmos-framework
+```
+
+2) Create the training environment
+
+For CUDA 12.8:
+
+```bash
+uv sync --all-extras --group=cu128-train
+source .venv/bin/activate
+export LD_LIBRARY_PATH=
+```
+
+For CUDA 13.0, use `--group=cu130-train` instead.
+
+3) Convert Cosmos3-Nano into a local VLM checkpoint
+
+This produces the local weights directory used for Cosmos3 reasoner FT:
+
+```bash
+python -m cosmos_framework.scripts.convert_model_to_vlm_safetensors \
+  --checkpoint-path Cosmos3-Nano \
+  -o examples/checkpoints/Cosmos3-Nano-VLM
+```
+
+After this step, the local FT-ready weights will be at:
+
+```bash
+cosmos-framework/examples/checkpoints/Cosmos3-Nano-VLM
+```
+
+### Use those weights for local Cosmos3 FT
+
+In our local Cosmos3 reasoner setup, this checkpoint is used through:
+
+- `examples/toml/sft_config/local_reasoner_sft.toml`
+- `examples/launch_sft_local_reasoner.sh`
+
+The base architecture remains `Qwen/Qwen3-VL-8B-Instruct`, while
+`safetensors_path` points to the converted local `Cosmos3-Nano-VLM` weights.
+
+### FT helper files copied in this repo
+
+The Cosmos3 FT helper files are also mirrored here:
+
+- `utils_cosmos/cosmos3/cosmos_framework/configs/base/vlm/experiment/local_reasoner_sft.py`
+- `utils_cosmos/cosmos3/examples/toml/sft_config/local_reasoner_sft.toml`
+- `utils_cosmos/cosmos3/examples/launch_sft_local_reasoner.sh`
+
+If you want to reuse them in a fresh `cosmos-framework` clone, copy them back to
+the same relative paths from the `Evaluation_VLM` repo root:
+
+```bash
+cp utils_cosmos/cosmos3/cosmos_framework/configs/base/vlm/experiment/local_reasoner_sft.py \
+  /path/to/cosmos-framework/cosmos_framework/configs/base/vlm/experiment/
+
+cp utils_cosmos/cosmos3/examples/toml/sft_config/local_reasoner_sft.toml \
+  /path/to/cosmos-framework/examples/toml/sft_config/
+
+cp utils_cosmos/cosmos3/examples/launch_sft_local_reasoner.sh \
+  /path/to/cosmos-framework/examples/
+```
+
+Then launch from inside `cosmos-framework`:
+
+```bash
+source .venv/bin/activate
+export LD_LIBRARY_PATH=
+bash examples/launch_sft_local_reasoner.sh
+```
+
+## Dataset utility scripts
+
+The following dataset-prep helpers are mirrored in `utils_cosmos/`:
+
+- `utils_cosmos/symlink_by_folder_name.py`
+- `utils_cosmos/split_dataset.py`
+- `utils_cosmos/subsample_test_dataset.py`
+
+### `symlink_by_folder_name.py`
+
+Create flat symlinked train/test datasets by scanning folder names and linking:
+
+- `.json` files from folders whose name contains `json`
+- `.mp4` / `.mov` files from the other folders
+
+Examples:
+
+```bash
+python3 utils_cosmos/symlink_by_folder_name.py --all_train
+python3 utils_cosmos/symlink_by_folder_name.py --all_test
+```
+
+Custom source/destination example:
+
+```bash
+python3 utils_cosmos/symlink_by_folder_name.py \
+  /path/to/src_a /path/to/src_b /path/to/dst
+```
+
+Useful defaults:
+
+- `--ds_root ds_pulito`
+- `--dst_json_dir ds_pulito/train_dataset_json`
+- `--dst_mp4_dir ds_pulito/train_dataset`
+- `--test_dst_json_dir ds_pulito/test_dataset_json`
+- `--test_dst_mp4_dir ds_pulito/test_dataset`
+- `--max_files N` to stop after a limited number of linked files
+
+### `split_dataset.py`
+
+Split matched `*.mp4` + `*.json` pairs into train/test folders by filename stem.
+By default it creates symlinks; `--copy` copies and `--move` moves.
+
+Example:
+
+```bash
+python3 utils_cosmos/split_dataset.py \
+  --mp4-dir /opt/dataset/ds_people/Dataset_training_v1_batch_1 \
+  --json-dir /opt/dataset/ds_people/Dataset_training_v1_batch_1_json_final_prompt \
+  --out-dir /opt/dataset/ds_people \
+  --split 0.8
+```
+
+This creates:
+
+- `train_dataset/`
+- `train_dataset_json/`
+- `test_dataset/`
+- `test_dataset_json/`
+
+### `subsample_test_dataset.py`
+
+Create a camera-balanced subset from `test_dataset/` and `test_dataset_json/`.
+Camera ID is inferred from the leading number in each filename.
+
+Example:
+
+```bash
+python3 utils_cosmos/subsample_test_dataset.py \
+  --mp4-dir /opt/dataset/test_dataset \
+  --json-dir /opt/dataset/test_dataset_json \
+  --out-mp4-dir /opt/dataset/test_dataset_subsample \
+  --out-json-dir /opt/dataset/test_dataset_subsample_json \
+  --size 3000
+```
+
+By default it copies files; use `--move` if you want to move them instead.
 
 ## Build Cosmos full-FT dataset (LLaVA format)
 
@@ -313,7 +466,50 @@ python3 Evaluation/answer_questions.py \
 ```
 
 Tip: You can avoid code edits by reusing an existing key and overriding its repo via env var,
-e.g. `COSMOS_REASON2_FULLFT_8B_17K_REPO=/path/to/new/model`.
+e.g. `COSMOS3_REPO=/path/to/new/model`.
+
+Current Cosmos3 wiring uses `cosmos3` as the model key and defaults to
+`nvidia-cosmos-ea/Cosmos3-Super-Reasoner` via `COSMOS3_REPO`.
+
+The reasoning variant `cosmos3-reason` uses the same repo but appends a
+think-style instruction to the user prompt and strips any `<think>...`
+section before saving the JSON response.
+
+### Fine-tuning Cosmos3 on a local dataset
+
+We also have a local Cosmos3 nano full-finetune export that can be used for
+evaluation or further SFT work. The local evaluation key is `cosmos3-nano-fullFT`,
+which maps to the HF-style export directory under:
+
+```bash
+/opt/models/dataset_clean/Cosmos3-FT/nano/local_reasoner_sft/hf_exports/iter_000000500/
+```
+
+That export contains the `config.json` and safetensors shards that vLLM needs.
+The raw training checkpoint under `.../checkpoints/iter_000000500/` is *not*
+servable by vLLM on its own.
+
+To reproduce the local full-FT flow:
+
+1) Train or resume the Cosmos3 local reasoner recipe in `cosmos-framework`
+   using [`examples/toml/sft_config/local_reasoner_sft.toml`](../cosmos-framework/examples/toml/sft_config/local_reasoner_sft.toml) and
+   [`examples/launch_sft_local_reasoner.sh`](../cosmos-framework/examples/launch_sft_local_reasoner.sh).
+
+2) Point `VLM_SAFETENSORS_PATH` at the exported HF directory if you want to
+   override the default at launch time:
+
+```bash
+export VLM_SAFETENSORS_PATH=/opt/models/dataset_clean/Cosmos3-FT/nano/local_reasoner_sft/hf_exports/iter_000000500
+bash examples/launch_sft_local_reasoner.sh
+```
+
+3) Use the evaluation harness with:
+
+```bash
+python3 Evaluation/answer_questions.py \
+  --task road \
+  --model cosmos3-nano-fullFT
+```
 
 
 ## Evaluation

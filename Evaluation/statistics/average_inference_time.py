@@ -25,13 +25,25 @@ os.environ.setdefault("TORCH_HOME", "/mnt/ssd1/torch")
 
 from huggingface_hub import login  # noqa: E402
 
+from Evaluation_VLM.Evaluation.utils.models_utils import prompt_text_for_model  # noqa: E402
 from Evaluation_VLM.Evaluation.utils.vllm_utils import (  # noqa: E402
     VLLMClientFactory,
     ensure_vllm_server,
     shutdown_vllm_server,
 )
 
-MODEL_CHOICES = ("qwen-2B", "qwen-8B", "qwen-32B", "cosmos1", "cosmos2-2B", "cosmos2-8B", "all")
+MODEL_CHOICES = (
+    "qwen-2B",
+    "qwen-8B",
+    "qwen-32B",
+    "cosmos1",
+    "cosmos3",
+    "cosmos2-2B",
+    "cosmos2-8B",
+    "cosmos-reason2-32B",
+    "cosmos2-reason-LoRAFT_17k-32B",
+    "all",
+)
 
 login(token=os.environ["HF_TOKEN"])
 
@@ -97,6 +109,7 @@ def process(args: argparse.Namespace) -> None:
             manager = ensure_vllm_server(model_key)
             client_factory = VLLMClientFactory.from_server(manager, model_key)
             client = client_factory.get_client()
+            prompt_text = prompt_text_for_model(model_key, PROMPT_PERCEPTION_JSON)
 
             elapsed_values: List[float] = []
             processed = 0
@@ -107,7 +120,7 @@ def process(args: argparse.Namespace) -> None:
                     break
 
                 logging.info("Timing media=%s with model=%s", media_path.name, model_key)
-                result = client.run_video_inference_json(media_path, PROMPT_PERCEPTION_JSON)
+                result = client.run_video_inference_json(media_path, prompt_text)
                 if result is not None:
                     elapsed_values.append(result.elapsed_s)
                 processed += 1

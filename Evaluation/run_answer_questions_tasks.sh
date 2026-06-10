@@ -37,6 +37,8 @@ done
 echo "GPUs free for ${IDLE_SECONDS_REQUIRED}s. Launching..."
 
 BASE_MODELS=(
+  "cosmos3"
+  "cosmos-reason2-32B"
   "cosmos2-2B"
   "cosmos2-8B"
   "qwen-8B"
